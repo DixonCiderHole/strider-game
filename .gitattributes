@@ -1,0 +1,12 @@
+# Normalize line endings for text; keep binaries untouched
+* text=auto eol=lf
+*.glb binary
+*.fbx binary
+*.blend binary
+*.png binary
+*.jpg binary
+*.wav binary
+*.mp3 binary
+*.ogg binary
+*.dll binary
+*.so binary

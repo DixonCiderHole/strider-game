@@ -1,0 +1,20 @@
+# Godot cache and imports (rebuilt automatically)
+.godot/
+.import/
+*.tmp
+
+# Exported game builds
+/build/
+/export/
+*.exe
+*.pck
+
+# Working files that aren't part of the game
+/rigwork/
+/debug/
+*.blend1
+
+# OS clutter
+Thumbs.db
+desktop.ini
+.DS_Store
