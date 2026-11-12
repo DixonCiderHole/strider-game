@@ -446,6 +446,7 @@ func _build_beacon() -> void:
 	var p := path_point(Z_END + 4.0)
 	var beacon := Node3D.new()
 	beacon.position = p
+	beacon.add_to_group("objective")   # gold marker on the compass
 	add_child(beacon)
 	var dark := U.mat(Color(0.15, 0.15, 0.16), 0.5)
 	var base := MeshInstance3D.new()

@@ -1,8 +1,11 @@
 extends RefCounted
 ## Progress that carries between areas: salvage and upgrades.
-## Static, so it survives scene changes. Saved to user://save.cfg.
+## Static, so it survives scene changes. Saved to user://save_<slot>.cfg
+## (several save files; the last one used is remembered in user://profile.cfg).
 
-const PATH := "user://save.cfg"
+const LEGACY_PATH := "user://save.cfg"
+const PROFILE_PATH := "user://profile.cfg"
+const SLOTS := 5
 const Items = preload("res://scripts/items.gd")
 const BACKPACK_SLOTS := 24
 const MAG_SIZE := 30
@@ -55,7 +58,15 @@ static var checkpoint := ""
 static var wake_at_camp := false
 ## She has joined you (after the campfire talk): she follows and fights.
 static var ally_joined := false
+## Allies' own level and XP: id -> {"level": int, "xp": int}. Allies who are
+## following you when you earn XP get the same amount.
+static var party := {}
+## Placed storage crates: Array of {"area", "type", "pos": Vector3, "yaw", "items": Array (null or {"id","n"})}.
+static var storage: Array = []
+## Which party member you are playing as (highlighted on the PARTY screen).
+static var active_member := "trooper"
 static var _loaded := false
+static var slot := 0   # 0 = not picked yet (uses the last one played)
 
 # ---- Survival / RPG state (saved) ----
 ## Backpack: BACKPACK_SLOTS entries, each null or {"id": String, "n": int}.
@@ -82,7 +93,7 @@ static func ensure_loaded() -> void:
 		return
 	_loaded = true
 	var cf := ConfigFile.new()
-	if cf.load(PATH) != OK:
+	if cf.load(save_path()) != OK:
 		_fix_backpack()
 		_starting_kit()
 		return
@@ -92,6 +103,8 @@ static func ensure_loaded() -> void:
 	checkpoint = cf.get_value("progress", "checkpoint", "")
 	horde_best_wave = cf.get_value("horde", "best_wave", 0)
 	ally_joined = cf.get_value("progress", "ally_joined", false)
+	party = cf.get_value("party", "stats", {})
+	storage = cf.get_value("party", "storage", [])
 	for k in levels:
 		levels[k] = cf.get_value("upgrades", k, 0)
 	backpack = cf.get_value("rpg", "backpack", [])
@@ -120,7 +133,14 @@ static func enter_area(scene: String) -> void:
 
 
 static func reset() -> void:
-	DirAccess.remove_absolute(ProjectSettings.globalize_path(PATH))
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(save_path()))
+	_clear()
+	_fix_backpack()
+	_starting_kit()
+	save()
+
+
+static func _clear() -> void:
 	salvage = 0
 	levels = {"blaster": 0, "armor": 0, "droid": 0}
 	reached_base = false
@@ -128,6 +148,8 @@ static func reset() -> void:
 	checkpoint = ""
 	horde_best_wave = 0
 	ally_joined = false
+	party = {}
+	storage = []
 	backpack = []
 	equipment = {"primary": "rifle", "sidearm": "pistol", "utility1": "", "utility2": "", "module1": "", "module2": "", "module3": ""}
 	mag = MAG_SIZE
@@ -138,9 +160,6 @@ static func reset() -> void:
 	bench_level = 0
 	quest_stage = 0
 	flags = {}
-	_fix_backpack()
-	_starting_kit()
-	save()
 
 
 static func save() -> void:
@@ -151,6 +170,8 @@ static func save() -> void:
 	cf.set_value("progress", "checkpoint", checkpoint)
 	cf.set_value("horde", "best_wave", horde_best_wave)
 	cf.set_value("progress", "ally_joined", ally_joined)
+	cf.set_value("party", "stats", party)
+	cf.set_value("party", "storage", storage)
 	for k in levels:
 		cf.set_value("upgrades", k, levels[k])
 	cf.set_value("rpg", "backpack", backpack)
@@ -163,7 +184,8 @@ static func save() -> void:
 	cf.set_value("rpg", "bench_level", bench_level)
 	cf.set_value("rpg", "quest_stage", quest_stage)
 	cf.set_value("rpg", "flags", flags)
-	cf.save(PATH)
+	cf.set_value("meta", "saved_at", int(Time.get_unix_time_from_system()))
+	cf.save(save_path())
 
 
 static func level(track: String) -> int:
@@ -388,7 +410,24 @@ static func add_xp(n: int) -> void:
 		player_level += 1
 		skill_points += 1
 		toast("LEVEL UP!  Level %d  ·  +1 skill point" % player_level)
+	# Allies following you learn alongside you.
+	var tree := Engine.get_main_loop() as SceneTree
+	if tree != null:
+		for m in tree.get_nodes_in_group("party_member"):
+			var st := party_stats(m.party_id)
+			st["xp"] = int(st["xp"]) + n
+			while int(st["xp"]) >= Items.xp_for(int(st["level"])):
+				st["xp"] = int(st["xp"]) - Items.xp_for(int(st["level"]))
+				st["level"] = int(st["level"]) + 1
+				toast("%s reached level %d" % [String(m.party_name).capitalize(), int(st["level"])])
 	changed()
+
+
+static func party_stats(id: String) -> Dictionary:
+	ensure_loaded()
+	if not party.has(id):
+		party[id] = {"level": 1, "xp": 0}
+	return party[id]
 
 
 static func rank(id: String) -> int:
@@ -536,3 +575,108 @@ static func check_quests_deferred() -> void:
 	_checking = true
 	check_quests()
 	_checking = false
+
+
+# ---------------------------------------------------------------- storage
+
+## Moves the whole stack in backpack slot `i` into crate `c` (merging first).
+## Returns true if anything moved.
+static func store(c: Dictionary, i: int) -> bool:
+	var s = backpack[i]
+	if s == null:
+		return false
+	var left := _put(c["items"], s["id"], int(s["n"]))
+	if left == int(s["n"]):
+		return false
+	if left <= 0:
+		backpack[i] = null
+	else:
+		s["n"] = left
+	changed()
+	return true
+
+
+## Moves the whole stack in crate slot `i` back into the backpack.
+static func take(c: Dictionary, i: int) -> bool:
+	var s = c["items"][i]
+	if s == null:
+		return false
+	var left := add_item(s["id"], int(s["n"]), false)
+	if left == int(s["n"]):
+		return false
+	if left <= 0:
+		c["items"][i] = null
+	else:
+		s["n"] = left
+	changed()
+	return true
+
+
+static func _put(slots: Array, id: String, n: int) -> int:
+	var stack: int = item(id).get("stack", 1)
+	var left := n
+	for s in slots:
+		if left <= 0:
+			break
+		if s != null and s["id"] == id and int(s["n"]) < stack:
+			var add := mini(stack - int(s["n"]), left)
+			s["n"] = int(s["n"]) + add
+			left -= add
+	for i in slots.size():
+		if left <= 0:
+			break
+		if slots[i] == null:
+			var add2 := mini(stack, left)
+			slots[i] = {"id": id, "n": add2}
+			left -= add2
+	return left
+
+
+# ---------------------------------------------------------------- save files
+
+static func current_slot() -> int:
+	if slot < 1:
+		var pf := ConfigFile.new()
+		slot = clampi(int(pf.get_value("profile", "last_slot", 1)) if pf.load(PROFILE_PATH) == OK else 1, 1, SLOTS)
+		# Older builds kept one save at user://save.cfg: it becomes save file 1.
+		if FileAccess.file_exists(LEGACY_PATH) and not FileAccess.file_exists("user://save_1.cfg"):
+			DirAccess.copy_absolute(ProjectSettings.globalize_path(LEGACY_PATH), ProjectSettings.globalize_path("user://save_1.cfg"))
+	return slot
+
+
+static func save_path(n := 0) -> String:
+	return "user://save_%d.cfg" % (n if n > 0 else current_slot())
+
+
+## Switches to save file `n` and loads it (an empty one starts fresh).
+static func use_slot(n: int) -> void:
+	slot = clampi(n, 1, SLOTS)
+	var pf := ConfigFile.new()
+	pf.set_value("profile", "last_slot", slot)
+	pf.save(PROFILE_PATH)
+	_clear()
+	_loaded = false
+	ensure_loaded()
+
+
+## Summary of save file `n` for the save-file list.
+static func slot_info(n: int) -> Dictionary:
+	current_slot()
+	var cf := ConfigFile.new()
+	if cf.load(save_path(n)) != OK:
+		return {"used": false}
+	return {
+		"used": true,
+		"area": String(cf.get_value("progress", "checkpoint", "")),
+		"level": int(cf.get_value("rpg", "level", 1)),
+		"salvage": int(cf.get_value("progress", "salvage", 0)),
+		"saved_at": int(cf.get_value("meta", "saved_at", 0)),
+	}
+
+
+static func delete_slot(n: int) -> void:
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(save_path(n)))
+	if n == current_slot():
+		_clear()
+		_loaded = false
+		ensure_loaded()

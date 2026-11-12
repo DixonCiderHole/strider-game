@@ -27,6 +27,13 @@ enum Order { FOLLOW, HOLD, MOVE, ATTACK }
 @export var fire_interval := 0.45
 @export var damage := 14.0
 
+## Shown on the HUD's party bars.
+var party_id := "droid"
+var party_name := "STRIDER DROID"
+var max_health := 100.0
+var health := 100.0
+## Shown in a menu portrait only: just idles, no AI, no party bars.
+var display_only := false
 var player
 var order := Order.FOLLOW
 var weapons_free := true
@@ -58,7 +65,12 @@ var _target = null
 func _ready() -> void:
 	collision_layer = 8
 	collision_mask = 1
-	add_to_group("companion")
+	if display_only:
+		collision_layer = 0
+		collision_mask = 0
+	else:
+		add_to_group("companion")
+		add_to_group("party_member")
 	var cs := CollisionShape3D.new()
 	var cap := CapsuleShape3D.new()
 	cap.radius = 0.55
@@ -182,6 +194,10 @@ func _emit_status() -> void:
 
 func _physics_process(delta: float) -> void:
 	_time += delta
+	if display_only:
+		velocity = Vector3.ZERO
+		_animate(delta)
+		return
 	if not is_on_floor():
 		velocity.y -= gravity * delta
 	if player == null or not is_instance_valid(player):

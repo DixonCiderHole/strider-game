@@ -8,6 +8,8 @@ const GS = preload("res://scripts/game_state.gd")
 const Items = preload("res://scripts/items.gd")
 const SettingsPanel = preload("res://scripts/settings_panel.gd")
 const PlayerScript = preload("res://scripts/player.gd")
+const AllyScript = preload("res://scripts/ally.gd")
+const CompanionScript = preload("res://scripts/companion.gd")
 const MAIN_MENU := "res://main_menu.tscn"
 const TABS := ["PARTY", "INVENTORY", "MAP", "SKILLS", "QUESTS", "SYSTEM"]
 
@@ -41,6 +43,8 @@ var _inv_header: Label
 var _viewer: SubViewport
 # Map
 var _map_vp: SubViewport
+var _party_vps: Array = []
+var _preview   # character in the INVENTORY tab
 var _map_cam: Camera3D
 var _map_marker: Label
 # Other pages
@@ -173,6 +177,7 @@ func close() -> void:
 	get_tree().paused = false
 	if _viewer != null:
 		_viewer.render_target_update_mode = SubViewport.UPDATE_DISABLED
+	_set_party_rendering(false)
 	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 
 
@@ -184,6 +189,7 @@ func _show_tab(t: String) -> void:
 	_settings.visible = false
 	_viewer.render_target_update_mode = SubViewport.UPDATE_ALWAYS if t == "INVENTORY" else SubViewport.UPDATE_DISABLED
 	_map_vp.render_target_update_mode = SubViewport.UPDATE_ALWAYS if t == "MAP" else SubViewport.UPDATE_DISABLED
+	_set_party_rendering(t == "PARTY")
 	if t == "SYSTEM":
 		_resume_btn.grab_focus()
 	_refresh()
@@ -312,6 +318,7 @@ func _build_inventory(page: Control) -> void:
 	_viewer.add_child(we)
 	var preview = PlayerScript.new()
 	preview.display_only = true
+	_preview = preview
 	_viewer.add_child(preview)
 	preview.model.rotation.y = deg_to_rad(165)
 	var cam := Camera3D.new()
@@ -333,6 +340,9 @@ func _build_inventory(page: Control) -> void:
 		b.custom_minimum_size = Vector2(196, 52)
 		b.add_theme_font_size_override("font_size", 14)
 		b.clip_text = true
+		b.expand_icon = true
+		b.icon_alignment = HORIZONTAL_ALIGNMENT_LEFT
+		b.add_theme_constant_override("icon_max_width", 40)
 		b.set_meta("label", names[k])
 		b.pressed.connect(_on_equip_slot.bind(k))
 		eq.add_child(b)
@@ -352,8 +362,12 @@ func _build_inventory(page: Control) -> void:
 	right.add_child(grid)
 	for i in GS.BACKPACK_SLOTS:
 		var b2 := Button.new()
-		b2.custom_minimum_size = Vector2(86, 78)
-		b2.add_theme_font_size_override("font_size", 15)
+		b2.custom_minimum_size = Vector2(86, 86)
+		b2.add_theme_font_size_override("font_size", 14)
+		b2.expand_icon = true
+		b2.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		b2.vertical_icon_alignment = VERTICAL_ALIGNMENT_TOP
+		b2.add_theme_constant_override("icon_max_width", 56)
 		b2.pressed.connect(_on_slot.bind(i))
 		grid.add_child(b2)
 		_slot_buttons.append(b2)
@@ -377,6 +391,9 @@ func _build_inventory(page: Control) -> void:
 
 
 func _refresh_inventory() -> void:
+	if _preview != null and player != null and is_instance_valid(player) and _preview.weapon != player.weapon:
+		_preview.weapon = player.weapon
+		_preview._show_weapon_model()
 	_inv_header.text = "LEVEL %d   ·   %d / %d XP   ·   %d skill point(s)   ·   Health %d / %d" % [
 		GS.player_level, GS.xp, Items.xp_for(GS.player_level), GS.skill_points,
 		int(player.health) if player != null else 0, int(GS.player_max_health())]
@@ -385,16 +402,23 @@ func _refresh_inventory() -> void:
 		var s = GS.backpack[i]
 		if s == null:
 			b.text = ""
+			b.icon = null
+			b.tooltip_text = ""
 			b.add_theme_stylebox_override("normal", _slot_style(Color(0, 0, 0, 0), i == _selected))
 		else:
 			var it := GS.item(s["id"])
-			b.text = "%s\n%s" % [it.get("tag", "?"), ("x%d" % int(s["n"])) if int(s["n"]) > 1 else ""]
+			b.icon = Items.icon(s["id"])
+			b.tooltip_text = it.get("name", "")
+			b.text = ("x%d" % int(s["n"])) if int(s["n"]) > 1 else " "
+			if b.icon == null:
+				b.text = "%s\n%s" % [it.get("tag", "?"), b.text]
 			b.add_theme_stylebox_override("normal", _slot_style(it.get("color", Color.WHITE), i == _selected))
 		b.add_theme_stylebox_override("hover", _slot_style(Color(0.5, 0.1, 0.08), true))
 	for k in _equip_buttons:
 		var eb: Button = _equip_buttons[k]
 		var id: String = GS.equipment.get(k, "")
 		var label: String = eb.get_meta("label")
+		eb.icon = Items.icon(id) if id != "" else null
 		if id == "":
 			eb.text = label + "\n—"
 		else:
@@ -415,7 +439,8 @@ func _refresh_inventory() -> void:
 		var it2 := GS.item(sel["id"])
 		_detail_name.text = "%s   x%d" % [it2["name"], int(sel["n"])]
 		_detail_desc.text = it2.get("desc", "")
-		_use_btn.disabled = it2.get("type") != "consumable"
+		_use_btn.disabled = not (it2.get("type") in ["consumable", "placeable"])
+		_use_btn.text = "PLACE" if it2.get("type") == "placeable" else "USE"
 		_equip_btn.disabled = it2.get("slot", "") == ""
 		_drop_btn.disabled = false
 
@@ -428,7 +453,10 @@ func _on_slot(i: int) -> void:
 func _on_use() -> void:
 	var s = GS.backpack[_selected] if _selected >= 0 else null
 	if s != null and player != null:
-		player.use_item(s["id"])
+		var placing: bool = GS.item(s["id"]).get("type") == "placeable"
+		if player.use_item(s["id"]) and placing:
+			close()
+			return
 	_refresh_inventory()
 
 
@@ -453,47 +481,230 @@ func _on_equip_slot(k: String) -> void:
 # ---------------------------------------------------------------- PARTY
 
 func _build_party(page: Control) -> void:
-	var v := UI.vbox(16)
+	var v := UI.vbox(12)
 	page.add_child(v)
-	v.add_child(UI.label("PARTY", 30, UI.ACCENT))
+	var head := HBoxContainer.new()
+	v.add_child(head)
+	var t := UI.label("PARTY", 30, UI.ACCENT)
+	t.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	head.add_child(t)
+	head.add_child(UI.label("Highlighted: the member you are playing as", 15, UI.MUTED))
 	_party_box = HBoxContainer.new()
-	_party_box.add_theme_constant_override("separation", 24)
+	_party_box.add_theme_constant_override("separation", 22)
+	_party_box.alignment = BoxContainer.ALIGNMENT_CENTER
 	v.add_child(_party_box)
 
 
-func _card(title: String, role: String, lines: Array) -> Control:
+func _set_party_rendering(on: bool) -> void:
+	for vp in _party_vps:
+		if is_instance_valid(vp):
+			vp.render_target_update_mode = SubViewport.UPDATE_ALWAYS if on else SubViewport.UPDATE_DISABLED
+
+
+## A small 3D stage with the member idling and slowly turning.
+func _portrait(id: String) -> Control:
+	var frame := PanelContainer.new()
+	var fs := UI.box(Color(0.05, 0.055, 0.07, 1.0), Color(1, 1, 1, 0.08), 1, 4)
+	fs.content_margin_left = 0
+	fs.content_margin_right = 0
+	fs.content_margin_top = 0
+	fs.content_margin_bottom = 0
+	frame.add_theme_stylebox_override("panel", fs)
+	var svc := SubViewportContainer.new()
+	svc.custom_minimum_size = Vector2(290, 320)
+	svc.stretch = true
+	frame.add_child(svc)
+	var vp := SubViewport.new()
+	vp.own_world_3d = true
+	vp.transparent_bg = true
+	vp.msaa_3d = Viewport.MSAA_4X
+	vp.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+	svc.add_child(vp)
+	_party_vps.append(vp)
+	var key := DirectionalLight3D.new()
+	key.rotation_degrees = Vector3(-28, -35, 0)
+	key.light_energy = 1.2
+	vp.add_child(key)
+	var rim := DirectionalLight3D.new()
+	rim.rotation_degrees = Vector3(-10, 150, 0)
+	rim.light_energy = 0.9
+	rim.light_color = Color(1.0, 0.45, 0.35) if id == GS.active_member else Color(0.5, 0.75, 1.0)
+	vp.add_child(rim)
+	var we := WorldEnvironment.new()
+	var env := Environment.new()
+	env.background_mode = Environment.BG_CLEAR_COLOR
+	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+	env.ambient_light_color = Color(0.45, 0.46, 0.5)
+	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
+	we.environment = env
+	vp.add_child(we)
+	# Floor disc with a glowing ring.
+	var disc := MeshInstance3D.new()
+	var cm := CylinderMesh.new()
+	cm.top_radius = 0.75
+	cm.bottom_radius = 0.75
+	cm.height = 0.02
+	disc.mesh = cm
+	var dm := StandardMaterial3D.new()
+	dm.albedo_color = Color(0.08, 0.09, 0.11)
+	dm.emission_enabled = true
+	dm.emission = UI.ACCENT if id == GS.active_member else Color(0.2, 0.5, 0.8)
+	dm.emission_energy_multiplier = 0.35
+	disc.material_override = dm
+	vp.add_child(disc)
+	var turn := Node3D.new()
+	vp.add_child(turn)
+	# Characters face -Z; turn them round to face the camera. (Their models
+	# are only built once the viewport is in the tree, so rotate a parent.)
+	var face := Node3D.new()
+	face.rotation.y = PI
+	turn.add_child(face)
+	var cam := Camera3D.new()
+	cam.fov = 30
+	var look_y := 0.92
+	match id:
+		"trooper":
+			var t = PlayerScript.new()
+			t.display_only = true
+			# Hold whatever weapon you have out right now.
+			t.weapon = player.weapon if player != null and is_instance_valid(player) else "primary"
+			face.add_child(t)
+		"survivor":
+			face.add_child(AllyScript.new())
+		"droid":
+			var d = CompanionScript.new()
+			d.display_only = true
+			face.add_child(d)
+			look_y = 0.6
+	var cam_pos := Vector3(0.0, look_y + 0.1, 4.4 if id != "droid" else 3.6)
+	cam.transform = Transform3D(Basis.looking_at(Vector3(0.0, look_y, 0.0) - cam_pos), cam_pos)
+	cam.current = true
+	vp.add_child(cam)
+	# Gentle sway so it feels alive (keeps running while the game is paused).
+	_sway.call_deferred(turn)
+	return frame
+
+
+func _sway(turn: Node3D) -> void:
+	if not is_instance_valid(turn) or not turn.is_inside_tree():
+		return
+	var tw := turn.create_tween().set_loops().set_pause_mode(Tween.TWEEN_PAUSE_PROCESS)
+	tw.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+	tw.tween_property(turn, "rotation:y", deg_to_rad(28.0), 3.2).from(deg_to_rad(-28.0))
+	tw.tween_property(turn, "rotation:y", deg_to_rad(-28.0), 3.2)
+
+
+func _stat_row(name_text: String, value: String) -> Control:
+	var h := HBoxContainer.new()
+	var l := UI.label(name_text, 15, UI.MUTED)
+	l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	h.add_child(l)
+	h.add_child(UI.label(value, 16, UI.TEXT))
+	return h
+
+
+func _stat_bar(name_text: String, value: float, maximum: float, col: Color, text: String) -> Control:
+	var v := UI.vbox(2)
+	var h := HBoxContainer.new()
+	var l := UI.label(name_text, 14, UI.MUTED)
+	l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	h.add_child(l)
+	h.add_child(UI.label(text, 14, UI.TEXT))
+	v.add_child(h)
+	var b := ProgressBar.new()
+	b.custom_minimum_size = Vector2(0, 10)
+	b.show_percentage = false
+	b.max_value = maxf(1.0, maximum)
+	b.value = value
+	b.add_theme_stylebox_override("background", UI.box(Color(0, 0, 0, 0.6), Color(1, 1, 1, 0.1), 1, 2))
+	var f := StyleBoxFlat.new()
+	f.bg_color = col
+	f.set_corner_radius_all(2)
+	b.add_theme_stylebox_override("fill", f)
+	v.add_child(b)
+	return v
+
+
+func _member_column(id: String, name_text: String, role: String, level: int, xp: int, hp: float, hp_max: float, rows: Array) -> Control:
+	var active := id == GS.active_member
 	var p := PanelContainer.new()
-	p.add_theme_stylebox_override("panel", UI.box(Color(0.07, 0.07, 0.09, 0.9), Color(0.3, 0.3, 0.35, 0.7), 2, 6))
-	p.custom_minimum_size = Vector2(380, 260)
-	var v := UI.vbox(8)
+	var st := UI.box(Color(0.16, 0.04, 0.03, 0.95) if active else Color(0.07, 0.07, 0.09, 0.92),
+			UI.ACCENT if active else Color(0.3, 0.3, 0.35, 0.6), 3 if active else 1, 6)
+	st.content_margin_left = 12
+	st.content_margin_right = 12
+	st.content_margin_top = 12
+	st.content_margin_bottom = 12
+	if active:
+		st.shadow_color = Color(UI.ACCENT, 0.45)
+		st.shadow_size = 14
+	p.add_theme_stylebox_override("panel", st)
+	var v := UI.vbox(6)
+	v.custom_minimum_size = Vector2(290, 0)
 	p.add_child(v)
-	v.add_child(UI.label(title, 26, UI.TEXT))
-	v.add_child(UI.label(role, 16, UI.ACCENT))
-	for l in lines:
-		v.add_child(UI.label(l, 18, UI.MUTED))
+	var top := HBoxContainer.new()
+	v.add_child(top)
+	var nm := UI.label(name_text, 24, UI.TEXT)
+	nm.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	top.add_child(nm)
+	if active:
+		var tag := UI.label("ACTIVE", 14, Color.WHITE)
+		var tp := PanelContainer.new()
+		var ts := UI.box(UI.ACCENT, UI.ACCENT, 0, 3)
+		ts.content_margin_left = 8
+		ts.content_margin_right = 8
+		ts.content_margin_top = 2
+		ts.content_margin_bottom = 2
+		tp.add_theme_stylebox_override("panel", ts)
+		tp.add_child(tag)
+		tp.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		top.add_child(tp)
+	v.add_child(UI.label(role, 15, UI.ACCENT))
+	v.add_child(_portrait(id))
+	var need := Items.xp_for(level)
+	v.add_child(_stat_row("LEVEL", str(level)))
+	v.add_child(_stat_bar("HEALTH", hp, hp_max, Color(0.86, 0.16, 0.13), "%d / %d" % [int(hp), int(hp_max)]))
+	v.add_child(_stat_bar("EXPERIENCE", xp, need, Color(0.95, 0.75, 0.3), "%d / %d" % [xp, need]))
+	for r in rows:
+		v.add_child(_stat_row(r[0], r[1]))
+	var swap := UI.button("SWAP", 290)
+	swap.custom_minimum_size.y = 44
+	swap.alignment = HORIZONTAL_ALIGNMENT_CENTER
+	swap.disabled = true
+	swap.tooltip_text = "Swapping characters is coming in a later update."
+	v.add_child(swap)
 	return p
 
 
 func _refresh_party() -> void:
 	for c in _party_box.get_children():
 		c.queue_free()
-	var hp := "Health %d / %d" % [int(player.health), int(player.max_health)] if player != null else ""
-	_party_box.add_child(_card("YOU", "Trooper  ·  Level %d" % GS.player_level, [hp,
-		"Weapon: %s" % (player.weapon_name() if player != null else "-"),
-		"Damage per bolt: %d" % int(GS.player_damage()),
-		"Skill points: %d" % GS.skill_points]))
+	_party_vps.clear()
 	var scene := get_tree().current_scene
+	var hp: float = player.health if player != null else GS.player_max_health()
+	var hp_max: float = player.max_health if player != null else GS.player_max_health()
+	_party_box.add_child(_member_column("trooper", "TROOPER", "You  ·  Rifleman", GS.player_level, GS.xp, hp, hp_max, [
+		["WEAPON", player.weapon_name() if player != null else "Blaster Rifle"],
+		["DAMAGE / BOLT", str(int(GS.player_damage()))],
+		["SKILL POINTS", str(GS.skill_points)],
+	]))
 	if GS.ally_joined:
 		var a = scene.get_node_or_null("Ally") if scene != null else null
-		_party_box.add_child(_card("SURVIVOR", "Rifle  ·  ally", [
-			"With you" if a != null else "Waiting at camp",
-			"Fights with her rifle",
-			"Follows on your right"]))
+		var sa := GS.party_stats("survivor")
+		_party_box.add_child(_member_column("survivor", "SURVIVOR", "Ally  ·  Marksman", int(sa["level"]), int(sa["xp"]),
+				a.health if a != null and "health" in a else 100.0, a.max_health if a != null and "max_health" in a else 100.0, [
+			["WEAPON", "Long Rifle"],
+			["DAMAGE / BOLT", str(int(a.damage)) if a != null else "12"],
+			["STATUS", "With you" if a != null and a.player != null else "At camp"],
+		]))
 	var d = scene.get_node_or_null("Droid") if scene != null else null
-	_party_box.add_child(_card("STRIDER", "Combat droid", [
-		("Order: %s" % d.order_text()) if d != null else "Not deployed here",
-		"Damage per bolt: %d" % int(GS.droid_damage()),
-		"Keys 1-4 give orders"]))
+	var sd := GS.party_stats("droid")
+	_party_box.add_child(_member_column("droid", "STRIDER DROID", "Companion  ·  Combat droid", int(sd["level"]), int(sd["xp"]),
+			d.health if d != null else 100.0, d.max_health if d != null else 100.0, [
+		["WEAPON", "Twin blasters"],
+		["DAMAGE / BOLT", str(int(GS.droid_damage()))],
+		["ORDERS", d.order_text() if d != null else "Not deployed here"],
+	]))
+	_set_party_rendering(_tab == "PARTY")
 
 
 # ---------------------------------------------------------------- MAP

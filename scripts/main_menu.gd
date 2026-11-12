@@ -58,6 +58,9 @@ void fragment() {
 var _menu: Control
 var _settings: Control
 var _controls: Control
+var _saves: Control
+var _slot_rows: VBoxContainer
+var _confirm_delete := 0
 var _play_btn: Button
 var _skel: Skeleton3D
 var _bones := {}
@@ -142,10 +145,10 @@ func _ready() -> void:
 		var cont := _btn("CONTINUE  ·  " + _area_name(GS.checkpoint), _continue)
 		_menu.add_child(cont)
 		_play_btn = cont
-		_menu.add_child(_btn("PLAY FROM THE START", _start_story))
 	else:
 		_play_btn = _btn("PLAY", _start_story)
 		_menu.add_child(_play_btn)
+	_menu.add_child(_btn("SAVE FILES", func(): _show(_saves)))
 	var horde_text := "UNRELENTING HORDE"
 	if GS.horde_best_wave > 0:
 		horde_text += "  ·  BEST %d" % GS.horde_best_wave
@@ -165,6 +168,9 @@ func _ready() -> void:
 	_controls = _build_controls()
 	_controls.visible = false
 	col.add_child(_controls)
+	_saves = _build_saves()
+	_saves.visible = false
+	col.add_child(_saves)
 	_skin_panel.call_deferred(_settings)
 	_skin_panel(_controls)
 
@@ -226,6 +232,10 @@ func _reset_progress() -> void:
 func _show(panel: Control) -> void:
 	_settings.visible = panel == _settings
 	_controls.visible = panel == _controls
+	_saves.visible = panel == _saves
+	if panel == _saves:
+		_confirm_delete = 0
+		_refresh_saves()
 	_menu.visible = panel == null
 	_footer.visible = panel == null
 	if panel == null:
@@ -234,7 +244,7 @@ func _show(panel: Control) -> void:
 
 func _unhandled_input(event) -> void:
 	if event is InputEventKey and event.pressed and not event.echo and event.physical_keycode == KEY_ESCAPE:
-		if _settings.visible or _controls.visible:
+		if _settings.visible or _controls.visible or _saves.visible:
 			_show(null)
 	# Testing: F2 cycles the night backdrop through every area.
 	if event is InputEventKey and event.pressed and not event.echo and event.physical_keycode == KEY_F2:
@@ -473,3 +483,79 @@ func _play_music() -> void:
 	add_child(_music)
 	_music.play()
 	_music.create_tween().tween_property(_music, "volume_db", -5.0, 2.5)
+
+
+# ---------------------------------------------------------------- save files
+
+func _build_saves() -> Control:
+	var v := UI.vbox(10)
+	v.add_child(UI.label("SAVE FILES", 28, SKY))
+	v.add_child(UI.label("Pick a save to load it, or an empty slot to start a new game.", 15, UI.MUTED))
+	_slot_rows = UI.vbox(8)
+	v.add_child(_slot_rows)
+	var back := _btn("BACK", func(): _show(null))
+	v.add_child(back)
+	return v
+
+
+func _refresh_saves() -> void:
+	for c in _slot_rows.get_children():
+		c.queue_free()
+	var current := GS.current_slot()
+	for n in range(1, GS.SLOTS + 1):
+		var info := GS.slot_info(n)
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 8)
+		_slot_rows.add_child(row)
+		var text := ""
+		if info["used"]:
+			var area := _area_name(info["area"])
+			var when := ""
+			if int(info["saved_at"]) > 0:
+				when = Time.get_datetime_string_from_unix_time(int(info["saved_at"]) + _tz_offset(), true).substr(5, 11).replace("T", "  ")
+			text = "SLOT %d   ·   %s   ·   LV %d%s" % [n, area if area != "" else "NEW GAME", int(info["level"]), ("   ·   " + when) if when != "" else ""]
+		else:
+			text = "SLOT %d   ·   EMPTY   ·   NEW GAME" % n
+		var b := _btn(("◆ " if n == current and info["used"] else "") + text, _pick_slot.bind(n, info["used"]))
+		b.custom_minimum_size = Vector2(560, 50)
+		b.add_theme_font_size_override("font_size", 17)
+		if not info["used"]:
+			b.add_theme_color_override("font_color", Color(0.75, 0.9, 1.0, 0.75))
+		row.add_child(b)
+		if info["used"]:
+			var del := _btn("CONFIRM?" if _confirm_delete == n else "DELETE", _delete_slot.bind(n))
+			del.custom_minimum_size = Vector2(130, 50)
+			del.alignment = HORIZONTAL_ALIGNMENT_CENTER
+			del.add_theme_font_size_override("font_size", 15)
+			if _confirm_delete == n:
+				del.add_theme_color_override("font_color", Color(1.0, 0.45, 0.4))
+			row.add_child(del)
+	if _slot_rows.get_child_count() > 0:
+		(_slot_rows.get_child(0).get_child(0) as Button).grab_focus.call_deferred()
+
+
+func _tz_offset() -> int:
+	return int(Time.get_time_zone_from_system().get("bias", 0)) * 60
+
+
+func _pick_slot(n: int, used: bool) -> void:
+	GS.horde_mode = false
+	GS.use_slot(n)
+	if used and GS.checkpoint != "" and ResourceLoader.exists(GS.checkpoint):
+		get_tree().change_scene_to_file(GS.checkpoint)
+	else:
+		GS.reset()   # brand new save in this slot
+		get_tree().change_scene_to_file(GAME_SCENE)
+
+
+func _delete_slot(n: int) -> void:
+	if _confirm_delete != n:
+		_confirm_delete = n   # first click asks, second click deletes
+	else:
+		_confirm_delete = 0
+		var was_current := n == GS.current_slot()
+		GS.delete_slot(n)
+		if was_current:
+			get_tree().reload_current_scene()   # rebuild CONTINUE for the now-empty save
+			return
+	_refresh_saves()

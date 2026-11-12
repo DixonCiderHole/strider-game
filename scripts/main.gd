@@ -22,6 +22,10 @@ const DROID_FROM_START := true
 const ARENA_RADIUS := 60.0
 const CLEARING_RADIUS := 17.0
 const WRECK_POS := Vector3(-9.0, 0.0, -8.0)
+## The ship came in along this heading (degrees); its furrow lies behind it.
+## Set so the ship lies across your view at the start, torn side towards you.
+const WRECK_FURROW_DEG := 125.0
+const WreckScript = preload("res://scripts/wreck.gd")
 ## Terrain3D heightmap size in metres (centred on the clearing).
 const TERRAIN_SIZE := 384
 const TERRAIN_MATERIAL := "res://demo/data/M_terrain.tres"
@@ -261,6 +265,15 @@ func _victory() -> void:
 	var earned: int = total * GS.SALVAGE_PER_KILL + GS.CLEAR_BONUS
 	GS.add_salvage(earned)
 	hud.show_message("You survived.  +%d salvage\nThe creatures pull back into the trees..." % earned, 5.0)
+	if GS.reached_base:
+		# Coming back from camp: the trail is the tutorial, so after the
+		# waves you go straight back to the cave.
+		hud.show_message("You survived.  +%d salvage\nHeading back to camp..." % earned, 5.0)
+		await get_tree().create_timer(5.0).timeout
+		if not player.is_dead:
+			GS.save()
+			get_tree().change_scene_to_file("res://base.tscn")
+		return
 	_launch_flare()
 	await get_tree().create_timer(6.0).timeout
 	if not player.is_dead:
@@ -358,11 +371,15 @@ func _height_at(x: float, z: float) -> float:
 	var hill := 0.5 + 0.5 * _noise_hill.get_noise_2d(x, z)
 	h += smoothstep(52.0, 105.0, d + _noise_edge.get_noise_2d(x, z) * 10.0) * (12.0 + 26.0 * hill)
 	# Crash gouge: a long shallow trench running into the wreck.
-	var local := Vector2(x - WRECK_POS.x, z - WRECK_POS.z).rotated(deg_to_rad(35.0))
-	var along := clampf((local.y + 4.0) / 22.0, 0.0, 1.0)
-	var across := absf(local.x) / lerpf(3.0, 1.5, along)
-	if local.y > -6.0 and local.y < 20.0:
-		h -= (1.0 - smoothstep(0.0, 1.0, across)) * 0.7 * (1.0 - along) * smoothstep(-6.0, -2.0, local.y)
+	var local := Vector2(x - WRECK_POS.x, z - WRECK_POS.z).rotated(deg_to_rad(WRECK_FURROW_DEG))
+	var along := clampf((local.y + 10.0) / 40.0, 0.0, 1.0)
+	var across := absf(local.x) / lerpf(4.5, 2.0, along)
+	if local.y > -14.0 and local.y < 32.0:
+		var cut := (1.0 - smoothstep(0.0, 1.0, across)) * 1.3 * (1.0 - along) * smoothstep(-14.0, -9.0, local.y)
+		# Dirt shoved up in a berm in front of the nose and along the edges.
+		var berm := smoothstep(0.7, 1.0, across) * (1.0 - smoothstep(1.0, 1.6, across)) * 0.45 * (1.0 - along)
+		berm += (1.0 - smoothstep(0.0, 1.2, across)) * smoothstep(-14.0, -11.5, local.y) * (1.0 - smoothstep(-11.5, -9.5, local.y)) * 1.1
+		h += berm - cut
 	return h
 
 
@@ -434,15 +451,22 @@ func _build_terrain() -> void:
 			var d := Vector2(x, z).length() + _noise_edge.get_noise_2d(x * 3.0, z * 3.0) * 4.0
 			var w := 1.0 - smoothstep(CLEARING_RADIUS - 8.0, CLEARING_RADIUS + 2.0, d)
 			var dw := Vector2(x - WRECK_POS.x, z - WRECK_POS.z).length()
-			w = maxf(w, 1.0 - smoothstep(5.0, 9.0, dw))
+			# Churned dirt along the whole furrow, scorched around the wreck.
+			var lc := Vector2(x - WRECK_POS.x, z - WRECK_POS.z).rotated(deg_to_rad(WRECK_FURROW_DEG))
+			var furrow := 0.0
+			if lc.y > -15.0 and lc.y < 34.0:
+				var width := lerpf(6.0, 3.0, clampf((lc.y + 10.0) / 40.0, 0.0, 1.0))
+				furrow = 1.0 - smoothstep(width * 0.8, width * 1.3, absf(lc.x) + _noise_roll.get_noise_2d(x * 3.0, z * 3.0) * 1.5)
+			w = maxf(w, maxf(furrow, 1.0 - smoothstep(8.0, 13.0, dw)))
 			if w > 0.03:
 				data.set_control_auto(p, false)
 				data.set_control_base_id(p, 1)
 				data.set_control_overlay_id(p, 2)
 				data.set_control_blend(p, w)
-			if dw < 10.0:
-				var burn := 1.0 - smoothstep(2.0, 10.0, dw + _noise_roll.get_noise_2d(x * 4.0, z * 4.0) * 2.0)
-				data.set_color(p, Color.WHITE.lerp(Color(0.18, 0.16, 0.14), burn))
+			if dw < 16.0 or furrow > 0.0:
+				var burn := 1.0 - smoothstep(4.0, 15.0, dw + _noise_roll.get_noise_2d(x * 4.0, z * 4.0) * 3.0)
+				burn = maxf(burn, furrow * 0.55)
+				data.set_color(p, Color.WHITE.lerp(Color(0.16, 0.14, 0.12), burn))
 	data.update_maps()
 
 	# GPU grass that grows on the grass texture.
@@ -471,6 +495,7 @@ func _build_flat_ground() -> void:
 
 ## Tree and undergrowth models from Quaternius' Stylized Nature MegaKit (CC0).
 const NATURE := "res://glTF/"
+const WK = preload("res://scripts/world_kit.gd")
 const PINES := ["Pine_1", "Pine_2", "Pine_3", "Pine_4", "Pine_5"]
 const LEAFY := ["CommonTree_1", "CommonTree_2", "CommonTree_3", "CommonTree_4", "CommonTree_5"]
 const DEAD := ["DeadTree_1", "DeadTree_2", "DeadTree_3"]
@@ -479,6 +504,8 @@ const UNDERGROWTH := ["Bush_Common", "Bush_Common_Flowers", "Fern_1", "Plant_1_B
 
 ## First mesh in a model file, or null if it isn't there.
 func _model_mesh(model: String) -> Mesh:
+	if WK._is_tree(model):
+		return WK.model_mesh(model)
 	var path := NATURE + model + ".gltf"
 	if not ResourceLoader.exists(path):
 		return null
@@ -558,9 +585,7 @@ func _build_forest() -> void:
 			_add_instance(buckets, _pick_tree(pines, leafy, dead), p, rng.randf_range(1.7, 2.6))
 			far += 1
 
-	for mesh in buckets:
-		var mmi := _multimesh(mesh, null, buckets[mesh], Vector3.ZERO)
-		mmi.visibility_range_end = 230.0
+	WK.plant(self, buckets, 230.0)
 
 	# Undergrowth: bushes, ferns, plants and mushrooms around the trees.
 	var small := _meshes(UNDERGROWTH)
@@ -580,7 +605,7 @@ func _build_forest() -> void:
 		var a := rng.randf() * TAU
 		var r := rng.randf_range(CLEARING_RADIUS - 3.0, ARENA_RADIUS + 10.0)
 		var p := Vector3(cos(a) * r, 0.0, sin(a) * r)
-		if p.distance_to(WRECK_POS) < 6.0:
+		if p.distance_to(WRECK_POS) < 13.0:
 			continue
 		p.y = ground_y(p) - 0.05
 		var k := rng.randi() % names.size()
@@ -687,7 +712,7 @@ func _build_rocks() -> void:
 		var a := rng.randf() * TAU
 		var r := rng.randf_range(8.0, 55.0)
 		var pos := Vector3(cos(a) * r, 0.0, sin(a) * r)
-		if pos.distance_to(WRECK_POS) < 7.0 or pos.distance_to(Vector3(0, 0, 5)) < 4.0:
+		if pos.distance_to(WRECK_POS) < 14.0 or pos.distance_to(Vector3(0, 0, 5)) < 4.0:
 			continue
 		var s := rng.randf_range(0.12, 0.5)
 		if not scenes.is_empty():
@@ -708,61 +733,9 @@ func _build_rocks() -> void:
 
 ## Your crashed ship: smoking hull plates and fires.
 func _build_wreck() -> void:
-	var wreck := StaticBody3D.new()
-	wreck.position = Vector3(WRECK_POS.x, ground_y(WRECK_POS) - 0.15, WRECK_POS.z)
-	wreck.rotation_degrees = Vector3(0.0, 35.0, 0.0)
-	add_child(wreck)
-	Sfx.loop(wreck, "fire_loop", -4.0, 4.0)
-	var hull_mat := U.mat(Color(0.16, 0.16, 0.18), 0.45)
-	hull_mat.metallic = 0.6
-	var accent_mat := U.mat(Color(0.5, 0.05, 0.05), 0.5, Color(0.9, 0.05, 0.05), 1.5)
-	var burnt_mat := U.mat(Color(0.05, 0.05, 0.05), 1.0)
-
-	var pieces := [
-		# size, position, rotation (deg), material
-		[Vector3(3.2, 1.8, 8.0), Vector3(0.0, 0.7, 0.0), Vector3(-8.0, 0.0, 12.0), hull_mat],
-		[Vector3(2.2, 1.2, 2.5), Vector3(0.3, 1.6, -3.0), Vector3(-14.0, 0.0, 8.0), hull_mat],
-		[Vector3(6.0, 0.25, 2.4), Vector3(-3.8, 0.4, 1.0), Vector3(0.0, 15.0, -18.0), hull_mat],
-		[Vector3(2.5, 0.25, 2.0), Vector3(5.0, 0.15, 3.5), Vector3(5.0, -40.0, 8.0), hull_mat],
-		[Vector3(0.15, 0.3, 6.0), Vector3(1.62, 0.9, 0.0), Vector3(-8.0, 0.0, 12.0), accent_mat],
-		[Vector3(4.5, 0.05, 9.5), Vector3(0.0, 0.03, 0.5), Vector3.ZERO, burnt_mat],
-	]
-	for piece in pieces:
-		var mi := MeshInstance3D.new()
-		var bm := BoxMesh.new()
-		bm.size = piece[0]
-		mi.mesh = bm
-		mi.position = piece[1]
-		mi.rotation_degrees = piece[2]
-		mi.material_override = piece[3]
-		wreck.add_child(mi)
-
-	var cs := CollisionShape3D.new()
-	var shape := BoxShape3D.new()
-	shape.size = Vector3(3.2, 2.4, 8.0)
-	cs.shape = shape
-	cs.position.y = 1.0
-	wreck.add_child(cs)
-
-	var fire_mat := U.mat(Color(1.0, 0.5, 0.1), 0.5, Color(1.0, 0.4, 0.05), 6.0)
-	for fp in [Vector3(1.0, 1.6, 2.0), Vector3(-1.2, 1.4, -2.5), Vector3(4.0, 0.3, 3.2)]:
-		var flame := MeshInstance3D.new()
-		var cm := CylinderMesh.new()
-		cm.top_radius = 0.0
-		cm.bottom_radius = 0.35
-		cm.height = 0.9
-		flame.mesh = cm
-		flame.position = fp
-		flame.material_override = fire_mat
-		flame.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		wreck.add_child(flame)
-		var light := OmniLight3D.new()
-		light.light_color = Color(1.0, 0.55, 0.2)
-		light.omni_range = 7.0
-		light.position = fp + Vector3(0.0, 0.6, 0.0)
-		wreck.add_child(light)
-		_fire_lights.append(light)
-
+	var w := WreckScript.build(self, Vector3(WRECK_POS.x, ground_y(WRECK_POS), WRECK_POS.z), WRECK_FURROW_DEG + 180.0, ground_y, _fire_lights)
+	w.add_to_group("objective")   # defend the ship: gold marker on the compass
+	Sfx.loop(w, "fire_loop", -4.0, 4.0)
 
 
 ## Supply crates and debris in the wreckage of your ship.
@@ -771,12 +744,12 @@ func _build_salvage() -> void:
 	r.seed = 11
 	for k in 4:
 		var a := r.randf() * TAU
-		var p := WRECK_POS + Vector3(cos(a), 0.0, sin(a)) * r.randf_range(4.5, 7.0)
+		var p := WRECK_POS + Vector3(cos(a), 0.0, sin(a)) * r.randf_range(10.0, 13.0)
 		p.y = ground_y(p)
 		Pickup.spawn(self, "crate", "", p)
 	for k in 8:
 		var a2 := r.randf() * TAU
-		var p2 := WRECK_POS + Vector3(cos(a2), 0.0, sin(a2)) * r.randf_range(3.0, 11.0)
+		var p2 := WRECK_POS + Vector3(cos(a2), 0.0, sin(a2)) * r.randf_range(10.0, 18.0)
 		p2.y = ground_y(p2)
 		Pickup.spawn(self, "resource", "scrap" if k % 2 == 0 else "plastic", p2, Vector2i(1, 3))
 	for k in 6:

@@ -112,6 +112,11 @@ func _open_crate() -> void:
 	if _lid != null:
 		var tw := create_tween()
 		tw.tween_property(_lid, "rotation:x", -1.9, 0.35).set_trans(Tween.TRANS_BACK)
+	if _lock != null:
+		_lock.material_override = U.mat(Color(0.1, 0.4, 0.15), 0.4, Color(0.3, 1.0, 0.45), 3.0)
+	for c in get_children():
+		if c is OmniLight3D:
+			(c as OmniLight3D).light_color = Color(0.4, 1.0, 0.5)
 
 
 # ---------------------------------------------------------------- visuals
@@ -209,6 +214,12 @@ func _build_resource() -> void:
 	add_child(glow)
 
 
+const PROPS_GLB := "res://models/camp_props.glb"
+static var _crate_parts := {}
+var _lock: MeshInstance3D
+
+
+## Field supply case from models/camp_props.glb: body, hinged lid, lock light.
 func _build_crate() -> void:
 	var body := StaticBody3D.new()
 	add_child(body)
@@ -218,25 +229,32 @@ func _build_crate() -> void:
 	cs.shape = box
 	cs.position.y = 0.27
 	body.add_child(cs)
-	var dark := U.mat(Color(0.18, 0.19, 0.2), 0.6)
-	dark.metallic = 0.6
-	var bm := BoxMesh.new()
-	bm.size = Vector3(0.9, 0.5, 0.6)
-	_mesh(bm, dark, Vector3(0, 0.25, 0))
-	var band := BoxMesh.new()
-	band.size = Vector3(0.92, 0.06, 0.62)
-	_mesh(band, U.mat(Color(1.0, 0.5, 0.15), 0.5, Color(1.0, 0.45, 0.1), 0.8), Vector3(0, 0.33, 0))
-	# Lid hinged at the back edge.
+	if _crate_parts.is_empty() and ResourceLoader.exists(PROPS_GLB):
+		var lib: Node = load(PROPS_GLB).instantiate()
+		for n in ["LootCrate", "LootCrateLid", "LootCrateLock"]:
+			var src := lib.find_child(n, true, false) as MeshInstance3D
+			if src != null:
+				_crate_parts[n] = src.mesh
+		lib.free()
 	_lid = Node3D.new()
-	_lid.position = Vector3(0, 0.5, -0.3)
+	_lid.position = Vector3(0.0, 0.44, -0.3)
 	add_child(_lid)
-	var lm := BoxMesh.new()
-	lm.size = Vector3(0.94, 0.07, 0.64)
+	if _crate_parts.is_empty():
+		var bm := BoxMesh.new()
+		bm.size = Vector3(0.9, 0.5, 0.6)
+		_mesh(bm, U.mat(Color(0.2, 0.21, 0.22), 0.6), Vector3(0, 0.25, 0))
+		return
+	_mesh(_crate_parts["LootCrate"], null, Vector3.ZERO)
+	_lock = _mesh(_crate_parts["LootCrateLock"], null, Vector3.ZERO)
 	var lid := MeshInstance3D.new()
-	lid.mesh = lm
-	lid.material_override = dark
-	lid.position = Vector3(0, 0.035, 0.3)
+	lid.mesh = _crate_parts["LootCrateLid"]
 	_lid.add_child(lid)
+	var glow := OmniLight3D.new()
+	glow.light_color = Color(1.0, 0.65, 0.25)
+	glow.light_energy = 0.35
+	glow.omni_range = 1.3
+	glow.position = Vector3(0.0, 0.35, 0.55)
+	add_child(glow)
 
 
 func _build_vein() -> void:

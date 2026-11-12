@@ -1,8 +1,6 @@
 extends CanvasLayer
 ## On-screen info: health, wave, enemies left, crosshair and messages.
 
-var _health_bar: ProgressBar
-var _health_label: Label
 var _wave_label: Label
 var _enemies_label: Label
 var _message: Label
@@ -44,22 +42,7 @@ func _ready() -> void:
 	_hitmarker.modulate.a = 0.0
 	root.add_child(_hitmarker)
 
-	_health_label = _label("HEALTH", 18)
-	_health_label.position = Vector2(28, 18)
-	root.add_child(_health_label)
-
-	_health_bar = ProgressBar.new()
-	_health_bar.position = Vector2(28, 46)
-	_health_bar.size = Vector2(280, 20)
-	_health_bar.show_percentage = false
-	_health_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var bg := StyleBoxFlat.new()
-	bg.bg_color = Color(0, 0, 0, 0.55)
-	var fill := StyleBoxFlat.new()
-	fill.bg_color = Color(0.85, 0.12, 0.1)
-	_health_bar.add_theme_stylebox_override("background", bg)
-	_health_bar.add_theme_stylebox_override("fill", fill)
-	root.add_child(_health_bar)
+	# Health and XP bars live in the shared overlay (bottom left, always on).
 
 	_wave_label = _label("", 26)
 	_wave_label.anchor_left = 1.0
@@ -102,8 +85,12 @@ func _ready() -> void:
 	_hint.anchor_top = 1.0
 	_hint.anchor_bottom = 1.0
 	_hint.anchor_right = 1.0
-	_hint.offset_top = -48
+	_hint.offset_top = -70
 	_hint.offset_bottom = -16
+	_hint.vertical_alignment = VERTICAL_ALIGNMENT_BOTTOM
+	_hint.offset_left = 390
+	_hint.offset_right = -390
+	_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_hint.add_theme_color_override("font_color", Color(1, 1, 1, 0.75))
 	root.add_child(_hint)
@@ -121,10 +108,15 @@ func _build_droid_panel(root: Control) -> void:
 	sb.content_margin_top = 8
 	sb.content_margin_bottom = 8
 	_droid_panel.add_theme_stylebox_override("panel", sb)
+	# Bottom right, above the weapon readout (bottom left holds the health bars).
+	_droid_panel.anchor_left = 1.0
+	_droid_panel.anchor_right = 1.0
 	_droid_panel.anchor_top = 1.0
 	_droid_panel.anchor_bottom = 1.0
-	_droid_panel.offset_left = 28
-	_droid_panel.offset_top = -150
+	_droid_panel.offset_left = -430
+	_droid_panel.offset_right = -28
+	_droid_panel.offset_top = -300
+	_droid_panel.offset_bottom = -150
 	_droid_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_droid_panel.visible = false
 	root.add_child(_droid_panel)
@@ -167,10 +159,7 @@ func _label(text: String, font_size: int) -> Label:
 	return l
 
 
-func set_health(current: float, maximum: float) -> void:
-	_health_bar.max_value = maximum
-	_health_bar.value = current
-	_health_label.text = "HEALTH  %d" % int(round(current))
+func set_health(current: float, _maximum: float) -> void:
 	if _last_health >= 0.0 and current < _last_health:
 		_flash.color.a = 0.35
 		var tw := create_tween()

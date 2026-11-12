@@ -14,6 +14,7 @@ const GS = preload("res://scripts/game_state.gd")
 const CHARACTER_PATH := "res://models/maincharacter.glb"   # textured, unrigged
 const RIGGED_PATH := "res://models/trooper_rigged.fbx"      # Mixamo skeleton + idle
 const BLASTER_PATH := "res://models/blaster.glb"
+const PistolModel = preload("res://scripts/pistol_model.gd")
 const ANIM_FILES := {
 	"run": "res://models/anim_run.fbx",
 	"walk_fwd": "res://models/anim_walk_fwd.fbx",
@@ -56,6 +57,8 @@ var model: Node3D
 var visual: Node3D
 var gun: Node3D
 var muzzle: Node3D
+var _rifle_model: Node3D
+var _pistol_model: Node3D
 var muzzle_light: OmniLight3D
 
 # Rig
@@ -428,8 +431,10 @@ func _load_blaster() -> void:
 	gun.name = "Blaster"
 	gun.top_level = true
 	add_child(gun)
+	_rifle_model = Node3D.new()
+	gun.add_child(_rifle_model)
 	if ResourceLoader.exists(BLASTER_PATH):
-		gun.add_child(load(BLASTER_PATH).instantiate())
+		_rifle_model.add_child(load(BLASTER_PATH).instantiate())
 	else:
 		var mi := MeshInstance3D.new()
 		var bm := BoxMesh.new()
@@ -437,7 +442,10 @@ func _load_blaster() -> void:
 		mi.mesh = bm
 		mi.position.y = 0.2
 		mi.material_override = U.mat(Color(0.2, 0.2, 0.22), 0.4)
-		gun.add_child(mi)
+		_rifle_model.add_child(mi)
+	_pistol_model = PistolModel.build()
+	_pistol_model.visible = false
+	gun.add_child(_pistol_model)
 	muzzle = Node3D.new()
 	muzzle.position = GUN_MUZZLE
 	gun.add_child(muzzle)
@@ -448,6 +456,7 @@ func _load_blaster() -> void:
 	muzzle.add_child(muzzle_light)
 	_hand_r2 = _find_bone("RightHandMiddle1") if skeleton != null else -1
 	_hand_l2 = _find_bone("LeftHandMiddle1") if skeleton != null else -1
+	_show_weapon_model()
 
 
 func _palm(wrist: int, knuckle: int) -> Vector3:
@@ -529,6 +538,9 @@ func _exit_tree() -> void:
 func _refresh_stats() -> void:
 	if display_only or not is_inside_tree():
 		return
+	if weapon == "sidearm" and GS.equipment.get("sidearm", "") == "":
+		weapon = "primary"   # pistol unequipped while in hand
+	_show_weapon_model()
 	var w := GS.item(GS.equipment.get(weapon, ""))
 	damage = GS.player_damage() * float(w.get("damage", 1.0))
 	fire_interval = float(w.get("rate", 0.16))
@@ -572,6 +584,17 @@ func _switch_weapon() -> void:
 	weapon = other
 	_reload_t = 0.0
 	_refresh_stats()
+	_show_weapon_model()
+
+
+## Shows the rifle or the pistol in your hands to match the selected weapon.
+func _show_weapon_model() -> void:
+	if _rifle_model == null or _pistol_model == null:
+		return
+	var pistol := weapon == "sidearm"
+	_rifle_model.visible = not pistol
+	_pistol_model.visible = pistol
+	muzzle.position = PistolModel.MUZZLE if pistol else GUN_MUZZLE
 	Sfx.ui("ui_click", -6.0)
 
 
@@ -606,6 +629,17 @@ func _quick_heal() -> void:
 ## Uses a consumable from the backpack.
 func use_item(id: String) -> bool:
 	var it := GS.item(id)
+	if it.get("type") == "placeable" and GS.count(id) > 0:
+		var sc := get_tree().current_scene
+		if sc == null or not sc.has_method("place_crate"):
+			GS.toast("Storage crates can only be placed at camp.")
+			return false
+		if not sc.place_crate(id):
+			return false
+		GS.remove_item(id, 1)
+		GS.toast("Placed %s" % it["name"])
+		Sfx.ui("crate_open", -6.0, 0.05)
+		return true
 	if it.get("type") != "consumable" or GS.count(id) <= 0:
 		return false
 	GS.remove_item(id, 1)
@@ -803,6 +837,7 @@ func _physics_process(delta: float) -> void:
 
 	if _want_jump and is_on_floor():
 		velocity.y = jump_velocity
+	var climbing := _climb(dir, delta)
 	_want_jump = false
 
 	move_and_slide()
@@ -834,6 +869,8 @@ func _physics_process(delta: float) -> void:
 			_facing_yaw = lerp_angle(_facing_yaw, cam_yaw.rotation.y, clampf(7.0 * delta, 0.0, 1.0))
 			if absf(twist) < deg_to_rad(4.0):
 				_turning = false
+	if climbing:
+		_facing_yaw = lerp_angle(_facing_yaw, _climb_yaw, clampf(12.0 * delta, 0.0, 1.0))
 	model.rotation.y = _facing_yaw
 	twist = wrapf(cam_yaw.rotation.y - _facing_yaw, -PI, PI)
 	torso_yaw = lerpf(torso_yaw, twist, clampf(20.0 * delta, 0.0, 1.0))
@@ -853,6 +890,58 @@ func _physics_process(delta: float) -> void:
 		_fire_cd = fire_interval
 		_shoot()
 	muzzle_light.light_energy = move_toward(muzzle_light.light_energy, 0.0, 60.0 * delta)
+
+
+## Ladders: nodes in the "ladder" group carry metas "centre"/"half" (the
+## climb zone, in the ladder's own space; local +X points away from the wall)
+## and "roof" (height of the roof the ladder leads to).
+## Push towards the ladder to climb, pull away to climb down, Space to let go.
+var _climb_yaw := 0.0
+
+func _ladder_here():
+	for l in get_tree().get_nodes_in_group("ladder"):
+		var lp: Vector3 = (l as Node3D).global_transform.affine_inverse() * global_position
+		var d: Vector3 = (lp - (l.get_meta("centre") as Vector3)).abs()
+		var h: Vector3 = l.get_meta("half")
+		if d.x <= h.x and d.y <= h.y and d.z <= h.z:
+			return l
+	return null
+
+
+func _climb(dir: Vector3, delta: float) -> bool:
+	if not input_enabled:
+		return false
+	var l = _ladder_here()
+	if l == null:
+		return false
+	var xf: Transform3D = l.global_transform
+	var out := xf.basis.x.normalized()
+	var into := -out
+	var f := dir.dot(into)
+	if is_on_floor() and f < 0.3:
+		return false   # just walking past it, or stepping away from it
+	if _want_jump:
+		velocity = out * 3.5 + Vector3.UP * 3.0
+		return false
+	var lp: Vector3 = xf.affine_inverse() * global_position
+	var roof: float = l.get_meta("roof")
+	velocity.y = clampf(f * 2.0, -1.0, 1.0) * 2.8
+	var lateral := xf.basis.z.normalized()
+	var v_out: float
+	if lp.y > roof + 0.05 and f > 0.2:
+		v_out = -walk_speed * 0.8                       # over the top and onto the roof
+		velocity.y = maxf(velocity.y, 0.5)
+	else:
+		v_out = clampf((0.42 - lp.x) * 6.0, -2.5, 2.5)  # hug the rungs
+	velocity.x = out.x * v_out - lateral.x * lp.z * 4.0
+	velocity.z = out.z * v_out - lateral.z * lp.z * 4.0
+	_climb_yaw = atan2(-into.x, -into.z)
+	if absf(velocity.y) > 0.5:
+		_step_t -= delta * 2.0
+		if _step_t <= 0.0:
+			_step_t = 0.9
+			Sfx.at(global_position, "step%d" % (randi() % 3), -12.0, 0.2, 4.0)
+	return true
 
 
 ## Aim and shoot only; the body faces _facing_yaw and the camera is kept

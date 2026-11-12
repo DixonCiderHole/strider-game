@@ -112,7 +112,7 @@ static func build(parent: Node3D, pos: Vector3, yaw_deg: float, ground_y: Callab
 	var tilt := Node3D.new()
 	tilt.rotation_degrees = Vector3(9.0, 0.0, -13.0)   # nose down, roll towards the missing wing
 	body.add_child(tilt)
-	tilt.position = Vector3(0.0, -0.9, 0.0)
+	tilt.position = Vector3(0.0, 1.0, 0.0)   # hull origin is mid-body; belly sits just below the ground, nose dug in
 	tilt.scale = Vector3.ONE * SCALE
 
 	var hull_mat := _hull_material(Color(0.56, 0.58, 0.6), 0.55, 0.42)
@@ -128,7 +128,7 @@ static func build(parent: Node3D, pos: Vector3, yaw_deg: float, ground_y: Callab
 			continue
 		tilt.add_child(n)
 	ship_scene.free()
-	_apply_materials(tilt, hull_mat, panel_mat)
+	# The model carries its own PBR materials (panels, grime and scorching).
 
 	# Collision from the hull mesh itself.
 	for mi in tilt.find_children("*", "MeshInstance3D", true, false):
@@ -154,9 +154,8 @@ static func build(parent: Node3D, pos: Vector3, yaw_deg: float, ground_y: Callab
 		wt.rotation_degrees = Vector3(-8.0, 0.0, 168.0)
 		wt.scale = Vector3.ONE * SCALE
 		wb.add_child(wt)
-		wing_r.position = Vector3(-4.5, 0.0, 2.0)
+		wing_r.position = Vector3.ZERO   # the model centres the torn wing on its own origin
 		wt.add_child(wing_r)
-		_apply_materials(wt, hull_mat, panel_mat)
 		for mi in wt.find_children("*", "MeshInstance3D", true, false):
 			var cs := CollisionShape3D.new()
 			cs.shape = (mi as MeshInstance3D).mesh.create_convex_shape()

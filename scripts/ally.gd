@@ -39,9 +39,17 @@ const SPEED := 4.6
 const BOLT_COLOR := Color(1.0, 0.55, 0.15)
 
 
+## Shown on the HUD's party bars while she follows you.
+var party_id := "survivor"
+var party_name := "SURVIVOR"
+var max_health := 100.0
+var health := 100.0
+
+
 func follow(p) -> void:
 	player = p
 	mode = "idle"
+	add_to_group("party_member")
 
 
 func _ready() -> void:

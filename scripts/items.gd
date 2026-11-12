@@ -49,21 +49,31 @@ const ITEMS := {
 		"bonus": {"speed": 0.1}, "desc": "+10% movement speed while equipped."},
 	"mod_capacitor": {"name": "Capacitor Module", "type": "module", "slot": "module", "stack": 1, "color": Color(0.95, 0.8, 0.3), "tag": "M-CP",
 		"bonus": {"mag": 10}, "desc": "+10 shots per magazine while equipped."},
+	# Placeable storage
+	"crate_wood":  {"name": "Wooden Crate", "type": "placeable", "stack": 5, "slots": 10, "color": Color(0.5, 0.36, 0.22), "tag": "CRW",
+		"desc": "Timber storage crate on a scrap-metal frame with a mag-lock. Holds 10 stacks. Use it from your backpack to place it at camp."},
+	"crate_metal": {"name": "Metal Crate", "type": "placeable", "stack": 5, "slots": 20, "color": Color(0.32, 0.35, 0.4), "tag": "CRM",
+		"desc": "Sealed alloy cargo container with a powered lock. Holds 20 stacks. Use it from your backpack to place it at camp."},
 }
+
+## Crafting menu categories, in tab order (recipes pick one with "cat").
+const CRAFT_CATS := ["MEDICAL", "AMMO & GEAR", "TOOLS", "MODULES", "STORAGE"]
 
 ## Crafting bench recipes. bench = bench level needed; skill = skill node needed.
 const RECIPES := [
-	{"id": "bandage", "out": "bandage", "count": 1, "in": {"fiber": 3}, "bench": 1},
-	{"id": "cartridge", "out": "cartridge", "count": 1, "in": {"scrap": 2, "tech": 1}, "bench": 1},
-	{"id": "hatchet", "out": "hatchet", "count": 1, "in": {"scrap": 3, "wood": 2, "tech": 1}, "bench": 1},
-	{"id": "pick", "out": "pick", "count": 1, "in": {"scrap": 4, "wood": 2}, "bench": 1},
-	{"id": "grenade", "out": "grenade", "count": 2, "in": {"scrap": 2, "ore": 1, "plastic": 1}, "bench": 2},
-	{"id": "stim", "out": "stim", "count": 1, "in": {"bandage": 1, "tech": 1, "plastic": 2}, "bench": 2, "skill": "field_chem"},
-	{"id": "pistol", "out": "pistol", "count": 1, "in": {"scrap": 4, "tech": 2, "plastic": 1}, "bench": 2},
-	{"id": "mod_plating", "out": "mod_plating", "count": 1, "in": {"ore": 3, "scrap": 3, "tech": 1}, "bench": 2},
-	{"id": "mod_targeting", "out": "mod_targeting", "count": 1, "in": {"tech": 3, "plastic": 2, "ore": 1}, "bench": 2, "skill": "modding"},
-	{"id": "mod_servo", "out": "mod_servo", "count": 1, "in": {"tech": 2, "scrap": 3, "fiber": 2}, "bench": 2, "skill": "modding"},
-	{"id": "mod_capacitor", "out": "mod_capacitor", "count": 1, "in": {"tech": 3, "ore": 2}, "bench": 2, "skill": "modding"},
+	{"id": "bandage", "out": "bandage", "count": 1, "in": {"fiber": 3}, "bench": 1, "cat": "MEDICAL"},
+	{"id": "stim", "out": "stim", "count": 1, "in": {"bandage": 1, "tech": 1, "plastic": 2}, "bench": 2, "skill": "field_chem", "cat": "MEDICAL"},
+	{"id": "cartridge", "out": "cartridge", "count": 1, "in": {"scrap": 2, "tech": 1}, "bench": 1, "cat": "AMMO & GEAR"},
+	{"id": "grenade", "out": "grenade", "count": 2, "in": {"scrap": 2, "ore": 1, "plastic": 1}, "bench": 2, "cat": "AMMO & GEAR"},
+	{"id": "pistol", "out": "pistol", "count": 1, "in": {"scrap": 4, "tech": 2, "plastic": 1}, "bench": 2, "cat": "AMMO & GEAR"},
+	{"id": "hatchet", "out": "hatchet", "count": 1, "in": {"scrap": 3, "wood": 2, "tech": 1}, "bench": 1, "cat": "TOOLS"},
+	{"id": "pick", "out": "pick", "count": 1, "in": {"scrap": 4, "wood": 2}, "bench": 1, "cat": "TOOLS"},
+	{"id": "mod_plating", "out": "mod_plating", "count": 1, "in": {"ore": 3, "scrap": 3, "tech": 1}, "bench": 2, "cat": "MODULES"},
+	{"id": "mod_targeting", "out": "mod_targeting", "count": 1, "in": {"tech": 3, "plastic": 2, "ore": 1}, "bench": 2, "skill": "modding", "cat": "MODULES"},
+	{"id": "mod_servo", "out": "mod_servo", "count": 1, "in": {"tech": 2, "scrap": 3, "fiber": 2}, "bench": 2, "skill": "modding", "cat": "MODULES"},
+	{"id": "mod_capacitor", "out": "mod_capacitor", "count": 1, "in": {"tech": 3, "ore": 2}, "bench": 2, "skill": "modding", "cat": "MODULES"},
+	{"id": "crate_wood", "out": "crate_wood", "count": 1, "in": {"wood": 6, "scrap": 2}, "bench": 1, "cat": "STORAGE"},
+	{"id": "crate_metal", "out": "crate_metal", "count": 1, "in": {"scrap": 8, "plastic": 2, "tech": 1}, "bench": 1, "cat": "STORAGE"},
 ]
 
 ## Crafting bench levels: cost to build (level 1) or upgrade.
@@ -105,6 +115,11 @@ const QUESTS := [
 	{"title": "Upgrades", "goals": [["bench:2", "Upgrade the crafting bench"], ["equipped_module", "Craft and equip an enhancement module"]]},
 ]
 const QUEST_XP := 40
+
+## Inventory icon for an item (res://icons/items/<id>.png), or null.
+static func icon(id: String) -> Texture2D:
+	var path := "res://icons/items/%s.png" % id
+	return load(path) if ResourceLoader.exists(path) else null
 
 ## XP needed to reach the next level from `level`.
 static func xp_for(level: int) -> int:

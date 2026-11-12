@@ -18,12 +18,26 @@ const Pickup = preload("res://scripts/pickup.gd")
 const Items = preload("res://scripts/items.gd")
 const Interactable = preload("res://scripts/interactable.gd")
 const PauseMenuScript = preload("res://scripts/pause_menu.gd")
+const StorageCrate = preload("res://scripts/storage_crate.gd")
+const StoragePanel = preload("res://scripts/storage_panel.gd")
+const LorePanel = preload("res://scripts/lore_panel.gd")
+const Lore = preload("res://scripts/lore.gd")
 
 const CRASH_SITE := "res://main.tscn"
 const ROCK_SCENES := ["res://demo/assets/models/RockA.tscn", "res://demo/assets/models/RockB.tscn", "res://demo/assets/models/RockC.tscn"]
 const ROCK_MATERIAL := "res://demo/assets/materials/M_rock23_tp.tres"
 
-const TERRAIN_SIZE := 192
+const TERRAIN_SIZE := 320
+## Half-width of the walkable valley (was 38 m; now about four times the area).
+const VALLEY_HALF := 85.0
+## Landmarks around the open valley.
+const LAKE := Vector3(54.0, 0.0, 8.0)
+const LAKE_R := 18.0
+const WATER_Y := -0.55
+const SPIRES := Vector3(-52.0, 0.0, -4.0)
+const OUTPOST := Vector3(40.0, 0.0, -46.0)
+const MEADOW := Vector3(-42.0, 0.0, 44.0)
+const POD_POS := Vector3(20.0, 0.0, 12.0)
 const VALLEY_CENTER := Vector2(0.0, -4.0)
 ## Cave: an ellipsoid dome set into the cliff, mouth facing +Z (towards the valley).
 const CAVE := Vector3(0.0, 0.0, -17.0)
@@ -94,6 +108,11 @@ func _ready() -> void:
 	_build_campfire()
 	_build_crates()
 	_build_trail_exit()
+	_build_lake()
+	_build_spires()
+	_build_outpost()
+	_build_meadow()
+	_build_cherry_trees()
 	_build_forest()
 	if GS.menu_preview:
 		var cp := Vector3(6.5, 0.0, 6.0)
@@ -123,10 +142,10 @@ func _ready() -> void:
 	menu.player = player
 	add_child(menu)
 
-	# She sits by the fire, across from the bedroll, until you've talked.
+	# She sits by the fire, across from the beds, until you've talked.
 	ally = AllyScript.new()
 	ally.name = "Ally"
-	var seat := FIRE_POS + Vector3(1.7, 0.0, 0.7)
+	var seat := FIRE_POS + Vector3(1.1, 0.0, 1.45)
 	if GS.ally_joined:
 		ally.position = player.position + Vector3(2.0, 0.0, 1.0)
 		add_child(ally)
@@ -143,10 +162,20 @@ func _ready() -> void:
 	overlay = OverlayScript.new()
 	overlay.player = player
 	overlay.tracker_top = 60.0
+	overlay.objective_provider = _quest_target
 	add_child(overlay)
 	crafting = CraftPanel.new()
 	crafting.player = player
 	add_child(crafting)
+	var lore_panel = LorePanel.new()
+	lore_panel.player = player
+	add_child(lore_panel)
+	var storage_panel = StoragePanel.new()
+	storage_panel.player = player
+	add_child(storage_panel)
+	for d in GS.storage:
+		if d.get("area", "") == "res://base.tscn":
+			StorageCrate.spawn(self, d)
 	_build_bench()
 	_build_resources()
 	_build_pod_wreck()
@@ -155,17 +184,17 @@ func _ready() -> void:
 		GS.wake_at_camp = false
 		_wake_up()
 	else:
-		_show_banner("BASE CAMP\nA dry cave in the cliffs. Check the crates inside.", 5.0)
+		_show_banner("BASE CAMP\nA dry cave in the cliffs, fitted out as a shelter.\nCheck the stations inside.", 5.0)
 
 
-## Arriving from the story: you come to on the bedroll by the fire.
+## Arriving from the story: you come to on a cot by the fire.
 func _wake_up() -> void:
-	# Lying on the bedroll, head at its far end, feet towards the near end.
-	var bed := FIRE_POS + Vector3(-2.4, 0.0, -1.0)
-	var axis := Vector3(sin(deg_to_rad(20.0)), 0.0, cos(deg_to_rad(20.0)))
+	# Lying on the left bed, head on the pillow (towards the back of the cave).
+	var bed := BED_L
+	var yaw := PI + deg_to_rad(4.0)
+	var axis := Vector3(sin(yaw), 0.0, cos(yaw))
 	var feet := bed - axis * 0.85
-	player.position = feet + Vector3(0.0, _ground(feet) + 0.02, 0.0)
-	var yaw := deg_to_rad(20.0)   # body (head) runs along the bedroll
+	player.position = feet + Vector3(0.0, _ground(bed) + 0.6, 0.0)
 	player.sleeping = true
 	player._sleep_amount = 1.0
 	player.input_enabled = false
@@ -174,7 +203,7 @@ func _wake_up() -> void:
 	player.cam_yaw.rotation.y = yaw + PI * 0.75
 	player.health = player.max_health * 0.5
 	droid.position = bed + Vector3(-1.5, _ground(bed) + 0.5, 2.5)
-	_show_banner("You wake on a bedroll by a fire.\nShe's sitting across from you, watching the flames.\n\nPress any key to get up", 600.0)
+	_show_banner("You wake on a cot by a fire.\nShe's sitting across from you, watching the flames.\n\nPress any key to get up", 600.0)
 	await get_tree().create_timer(1.5).timeout
 	_waiting_get_up = true
 
@@ -188,7 +217,7 @@ func _get_up() -> void:
 	player.sleeping = false
 	await get_tree().create_timer(1.3).timeout
 	player.input_enabled = true
-	_show_banner("BASE CAMP\nRest by the fire. Check the crates.", 4.0)
+	_show_banner("BASE CAMP\nRest by the fire. Check the stations at the back.", 4.0)
 
 
 func _process(delta: float) -> void:
@@ -282,13 +311,21 @@ func _build_environment() -> void:
 func _height_at(x: float, z: float) -> float:
 	var d := Vector2(x, z).distance_to(VALLEY_CENTER)
 	var h := _noise_roll.get_noise_2d(x, z) * lerpf(0.15, 1.8, smoothstep(12.0, 30.0, d))
-	h += smoothstep(26.0, 58.0, d + _noise_hill.get_noise_2d(x * 2.0, z * 2.0) * 8.0) * (10.0 + 16.0 * (0.5 + 0.5 * _noise_hill.get_noise_2d(x, z)))
+	# Gentle rises across the open valley, then the ring of hills well out.
+	h += smoothstep(30.0, 70.0, d) * (0.5 + 0.5 * _noise_hill.get_noise_2d(x * 1.5, z * 1.5)) * 2.2
+	h += smoothstep(74.0, 112.0, d + _noise_hill.get_noise_2d(x * 2.0, z * 2.0) * 10.0) * (12.0 + 18.0 * (0.5 + 0.5 * _noise_hill.get_noise_2d(x, z)))
 	var md := Vector2(x, (z - CAVE.z - 3.0) / 0.9).length()
 	var mound := (1.0 - smoothstep(13.0, 28.0, md)) * (7.5 + _noise_hill.get_noise_2d(x * 3.0, z * 3.0) * 1.5)
 	mound *= smoothstep(CAVE.z + CAVE_R.z + 0.5, CAVE.z + CAVE_R.z - 5.0, z)
 	h = maxf(h, mound)
 	var e := Vector2(x / (CAVE_R.x + 0.6), (z - CAVE.z) / (CAVE_R.z + 0.6)).length()
 	h = lerpf(0.0, h, smoothstep(0.92, 1.12, e))
+	# Lake basin (after the mound, whose max() would otherwise fill it in).
+	var ld := Vector2(x - LAKE.x, z - LAKE.z).length() + _noise_roll.get_noise_2d(x * 2.0, z * 2.0) * 3.0
+	h = lerpf(h, -1.9, 1.0 - smoothstep(LAKE_R - 7.0, LAKE_R + 3.0, ld))
+	# Flatten the outpost pad.
+	var od := Vector2(x - OUTPOST.x, z - OUTPOST.z).length()
+	h = lerpf(h, 0.4, 1.0 - smoothstep(10.0, 16.0, od))
 	return h
 
 
@@ -308,6 +345,18 @@ func _paint(data, x: float, z: float) -> void:
 	var fd := Vector2(x - FIRE_POS.x, z - FIRE_POS.z).length()
 	if fd < 2.2:
 		data.set_color(p, Color.WHITE.lerp(Color(0.15, 0.13, 0.12), 1.0 - smoothstep(0.5, 2.2, fd)))
+	# Muddy lake shore, rocky ground round the spires, and the outpost pad.
+	var ld := Vector2(x - LAKE.x, z - LAKE.z).length()
+	if ld < LAKE_R + 5.0:
+		WK.paint_dirt(data, p, 1.0 - smoothstep(LAKE_R - 2.0, LAKE_R + 5.0, ld))
+		if ld < LAKE_R + 1.0:
+			data.set_color(p, Color(0.6, 0.55, 0.5))
+	var sd := Vector2(x - SPIRES.x, z - SPIRES.z).length()
+	if sd < 18.0:
+		WK.paint_dirt(data, p, (1.0 - smoothstep(8.0, 18.0, sd)) * 0.8)
+	var od := Vector2(x - OUTPOST.x, z - OUTPOST.z).length()
+	if od < 16.0:
+		WK.paint_dirt(data, p, 1.0 - smoothstep(9.0, 16.0, od))
 
 
 func _build_ground() -> void:
@@ -317,18 +366,18 @@ func _build_ground() -> void:
 	_noise_hill.seed = 17
 	_noise_hill.frequency = 0.015
 	_noise_hill.fractal_octaves = 4
-	terrain = WK.build_terrain(self, TERRAIN_SIZE, _height_at, _paint, 34)
+	terrain = WK.build_terrain(self, TERRAIN_SIZE, _height_at, _paint, 100)
 	if terrain == null:
 		var body := StaticBody3D.new()
 		var cs := CollisionShape3D.new()
 		var box := BoxShape3D.new()
-		box.size = Vector3(200.0, 1.0, 200.0)
+		box.size = Vector3(320.0, 1.0, 320.0)
 		cs.shape = box
 		cs.position.y = -0.5
 		body.add_child(cs)
 		var mi := MeshInstance3D.new()
 		var plane := PlaneMesh.new()
-		plane.size = Vector2(200.0, 200.0)
+		plane.size = Vector2(320.0, 320.0)
 		mi.mesh = plane
 		mi.material_override = U.mat(Color(0.2, 0.28, 0.14), 0.95)
 		body.add_child(mi)
@@ -339,10 +388,10 @@ func _build_ground() -> void:
 		var wall := StaticBody3D.new()
 		var wcs := CollisionShape3D.new()
 		var wb := BoxShape3D.new()
-		wb.size = Vector3(2.0, 80.0, 100.0) if d.x != 0.0 else Vector3(100.0, 80.0, 2.0)
+		wb.size = Vector3(2.0, 80.0, VALLEY_HALF * 2.0 + 10.0) if d.x != 0.0 else Vector3(VALLEY_HALF * 2.0 + 10.0, 80.0, 2.0)
 		wcs.shape = wb
 		wall.add_child(wcs)
-		wall.position = d * 38.0 + Vector3(VALLEY_CENTER.x, 20.0, VALLEY_CENTER.y)
+		wall.position = d * VALLEY_HALF + Vector3(VALLEY_CENTER.x, 20.0, VALLEY_CENTER.y)
 		add_child(wall)
 
 
@@ -455,24 +504,80 @@ func _build_cave() -> void:
 	probe.blend_distance = 2.0
 	cave.add_child(probe)
 
-	# Boulders framing the mouth hide the seam between the inner and outer walls.
+	# Solid lip round the mouth: joins the inner wall to the outer wall so
+	# there's no open gap (that gap made the old edge boulders look like they
+	# were floating).
+	var rim_mi := MeshInstance3D.new()
+	rim_mi.mesh = _rim_mesh(0.0, 1.0, 1.6, 1.4)
+	rim_mi.material_override = mat
+	rim_mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_DOUBLE_SIDED
+	cave.add_child(rim_mi)
+
+	# A few boulders sitting on the ground at the foot of the mouth.
 	var scenes := []
 	for path in ROCK_SCENES:
 		if ResourceLoader.exists(path):
 			scenes.append(load(path))
 	if scenes.is_empty():
 		return
-	var steps := [-1.0, -0.85, -0.6, -0.3, 0.0, 0.3, 0.6, 0.85, 1.0]
-	for k in steps:
-		var az := deg_to_rad(MOUTH_HALF_DEG * k)
-		var el := deg_to_rad(MOUTH_TOP_DEG * sqrt(maxf(0.0, 1.0 - k * k)))
-		var p := _shell_point(az, el, 0.8, 0.0)
-		var rock: Node3D = scenes[rng.randi() % scenes.size()].instantiate()
-		var s := rng.randf_range(0.26, 0.36) if absf(k) < 0.95 else rng.randf_range(0.36, 0.46)
-		rock.scale = Vector3.ONE * s
-		rock.position = p + Vector3(0.0, 0.3 if absf(k) < 0.95 else 0.6, 0.6)
-		rock.rotation = Vector3(rng.randf() * TAU, rng.randf() * TAU, rng.randf() * TAU)
-		cave.add_child(rock)
+	for side in [-1.0, 1.0]:
+		for k in 2:
+			var az := deg_to_rad((MOUTH_HALF_DEG + 6.0 + k * 9.0) * side)
+			var foot := _shell_point(az, 0.0, 2.2 + k * 0.8, 0.0)
+			var world := CAVE + Vector3(foot.x, 0.0, foot.z)
+			var rock: Node3D = scenes[rng.randi() % scenes.size()].instantiate()
+			rock.scale = Vector3.ONE * rng.randf_range(0.42, 0.58) * (1.0 - k * 0.25)
+			rock.position = Vector3(foot.x, _ground(world) - CAVE.y - 0.35, foot.z)
+			rock.rotation = Vector3(0.0, rng.randf() * TAU, rng.randf_range(-0.2, 0.2))
+			cave.add_child(rock)
+
+
+## Bridges the inner and outer cave shells along every edge of the mouth
+## opening (both shells skip exactly the same cells, so the edges line up).
+func _rim_mesh(grow_in: float, amp_in: float, grow_out: float, amp_out: float) -> ArrayMesh:
+	var A := 96
+	var E := 22
+	var el0 := -0.12
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var cell_in_mouth := func(i: int, j: int) -> bool:
+		if j < 0 or j >= E:
+			return false
+		var ii := posmod(i, A)
+		return _in_mouth(TAU * (ii + 0.5) / A, lerpf(el0, PI * 0.5, (j + 0.5) / E))
+	for i in A:
+		for j in E:
+			if cell_in_mouth.call(i, j):
+				continue
+			var az0 := TAU * i / A
+			var az1 := TAU * (i + 1) / A
+			var e0 := lerpf(el0, PI * 0.5, float(j) / E)
+			var e1 := lerpf(el0, PI * 0.5, float(j + 1) / E)
+			var edges := []
+			if cell_in_mouth.call(i + 1, j):
+				edges.append([az1, e0, az1, e1])
+			if cell_in_mouth.call(i - 1, j):
+				edges.append([az0, e0, az0, e1])
+			if cell_in_mouth.call(i, j + 1):
+				edges.append([az0, e1, az1, e1])
+			if cell_in_mouth.call(i, j - 1):
+				edges.append([az0, e0, az1, e0])
+			for ed in edges:
+				var a := _shell_point(ed[0], ed[1], grow_in, amp_in)
+				var b := _shell_point(ed[2], ed[3], grow_in, amp_in)
+				var c := _shell_point(ed[2], ed[3], grow_out, amp_out)
+				var d := _shell_point(ed[0], ed[1], grow_out, amp_out)
+				# Both faces, each with its own flat normal, so the lip shows
+				# and lights correctly from either side.
+				var n: Vector3 = (b - a).cross(c - a).normalized()
+				for tri in [[a, b, c, -n], [a, c, d, -n], [a, c, b, n], [a, d, c, n]]:
+					st.set_normal(tri[3])
+					st.add_vertex(tri[0])
+					st.set_normal(tri[3])
+					st.add_vertex(tri[1])
+					st.set_normal(tri[3])
+					st.add_vertex(tri[2])
+	return st.commit()
 
 
 # ---------------------------------------------------------------- campfire
@@ -629,188 +734,220 @@ func _rest() -> void:
 	_show_banner("You rest by the fire.\nHealth restored.", 2.5)
 
 
-# ---------------------------------------------------------------- crates
+# ---------------------------------------------------------------- camp interior
 
-func _crate_mesh(parent: Node3D, size: Vector3, body_color: Color, stripe: Color) -> void:
-	var metal := U.mat(body_color, 0.55)
-	metal.metallic = 0.6
-	var dark := U.mat(body_color.darkened(0.45), 0.6)
-	dark.metallic = 0.7
-	var accent := U.mat(stripe, 0.5, stripe, 0.8)
-
-	var body := MeshInstance3D.new()
-	var bm := BoxMesh.new()
-	bm.size = size
-	body.mesh = bm
-	body.position.y = size.y * 0.5
-	body.material_override = metal
-	parent.add_child(body)
-
-	var lid := MeshInstance3D.new()
-	var lm := BoxMesh.new()
-	lm.size = Vector3(size.x + 0.06, 0.08, size.z + 0.06)
-	lid.mesh = lm
-	lid.position.y = size.y + 0.02
-	lid.material_override = dark
-	parent.add_child(lid)
-
-	# Reinforced corners.
-	for sx in [-1.0, 1.0]:
-		for sz in [-1.0, 1.0]:
-			var post := MeshInstance3D.new()
-			var pm := BoxMesh.new()
-			pm.size = Vector3(0.08, size.y, 0.08)
-			post.mesh = pm
-			post.position = Vector3(sx * size.x * 0.5, size.y * 0.5, sz * size.z * 0.5)
-			post.material_override = dark
-			parent.add_child(post)
-
-	# Faction stripe and handles.
-	var band := MeshInstance3D.new()
-	var bandm := BoxMesh.new()
-	bandm.size = Vector3(size.x + 0.02, 0.07, size.z + 0.02)
-	band.mesh = bandm
-	band.position.y = size.y * 0.62
-	band.material_override = accent
-	parent.add_child(band)
-	for sx in [-1.0, 1.0]:
-		var handle := MeshInstance3D.new()
-		var hm := BoxMesh.new()
-		hm.size = Vector3(0.05, 0.06, size.z * 0.4)
-		handle.mesh = hm
-		handle.position = Vector3(sx * (size.x * 0.5 + 0.04), size.y * 0.8, 0.0)
-		handle.material_override = dark
-		parent.add_child(handle)
+const PROPS_GLB := "res://models/camp_props.glb"
+const BED_L := Vector3(-2.75, 0.0, -12.5)
+const BED_R := Vector3(2.75, 0.0, -12.5)
+var _props_lib: Node3D
 
 
-func _add_crate(pos: Vector3, yaw_deg: float, track: String, color: Color, stripe: Color) -> void:
-	var crate := StaticBody3D.new()
-	crate.position = pos + Vector3(0.0, _ground(pos), 0.0)
-	crate.rotation_degrees.y = yaw_deg
-	add_child(crate)
-	var size := Vector3(1.4, 0.85, 0.9)
-	_crate_mesh(crate, size, color, stripe)
-	var cs := CollisionShape3D.new()
-	var box := BoxShape3D.new()
-	box.size = size
-	cs.shape = box
-	cs.position.y = size.y * 0.5
-	crate.add_child(cs)
+func _exit_tree() -> void:
+	if _props_lib != null:
+		_props_lib.free()
 
+
+## Places a prop from models/camp_props.glb (front = +Z) on the ground at
+## `pos` (pos.y lifts it), with an optional solid box of `solid` size.
+func _prop(prop_name: String, pos: Vector3, yaw_deg: float, solid := Vector3.ZERO, s := 1.0) -> StaticBody3D:
+	if _props_lib == null and ResourceLoader.exists(PROPS_GLB):
+		_props_lib = load(PROPS_GLB).instantiate()
+	var body := StaticBody3D.new()
+	body.name = prop_name
+	body.position = pos + Vector3(0.0, _ground(pos), 0.0)
+	body.rotation_degrees.y = yaw_deg
+	add_child(body)
+	if _props_lib != null:
+		var src := _props_lib.find_child(prop_name, true, false) as Node3D
+		if src != null:
+			var m := src.duplicate() as Node3D
+			m.transform = Transform3D.IDENTITY.scaled(Vector3.ONE * s)
+			body.add_child(m)
+	if solid != Vector3.ZERO:
+		var cs := CollisionShape3D.new()
+		var box := BoxShape3D.new()
+		box.size = solid * s
+		cs.shape = box
+		cs.position.y = solid.y * s * 0.5
+		body.add_child(cs)
+	return body
+
+
+## A readable datapad / journal lying at `local` on top of `on` (or in the world).
+func _readable(kind: String, on: Node3D, local: Vector3, yaw_deg: float, id: String) -> void:
+	var where: Transform3D = on.global_transform if on != null else Transform3D.IDENTITY
+	var pad := Node3D.new()
+	add_child(pad)
+	pad.global_transform = where * Transform3D(Basis(Vector3.UP, deg_to_rad(yaw_deg)), local)
+	if _props_lib != null:
+		var src := _props_lib.find_child(kind, true, false) as Node3D
+		if src != null:
+			var m := src.duplicate() as Node3D
+			m.transform = Transform3D.IDENTITY
+			pad.add_child(m)
+	var title := String(Lore.entry(id).get("title", "log"))
+	var it = Interactable.new()
+	it.prompt = "Read: %s" % title
+	it.reach = 1.8
+	it.action = func(): LorePanel.read(get_tree(), id)
+	pad.add_child(it)
+
+
+## Upgrade station (armory locker, med bench, droid bench): opens that track's panel.
+func _add_station(prop_name: String, pos: Vector3, yaw_deg: float, size: Vector3, track: String, stripe: Color) -> StaticBody3D:
+	var body := _prop(prop_name, pos, yaw_deg, size)
 	var info: Dictionary = GS.TRACKS[track]
 	var tag := Label3D.new()
 	tag.text = String(info["crate"])
-	tag.font_size = 48
+	tag.font_size = 40
 	tag.pixel_size = 0.004
 	tag.modulate = stripe.lightened(0.3)
 	tag.outline_size = 8
-	tag.position = Vector3(0.0, size.y * 0.35, size.z * 0.5 + 0.01)
-	crate.add_child(tag)
-
+	tag.billboard = BaseMaterial3D.BILLBOARD_FIXED_Y
+	tag.position = Vector3(0.0, size.y + 0.3, 0.0)
+	body.add_child(tag)
 	var glow := OmniLight3D.new()
 	glow.light_color = stripe
-	glow.light_energy = 0.6
-	glow.omni_range = 2.5
-	glow.position = Vector3(0.0, size.y + 0.4, 0.3)
-	crate.add_child(glow)
+	glow.light_energy = 0.5
+	glow.omni_range = 2.6
+	glow.position = Vector3(0.0, size.y * 0.7, size.z * 0.5 + 0.5)
+	body.add_child(glow)
+	var front := body.global_transform * Vector3(0.0, 0.0, size.z * 0.5 + 0.35)
+	_add_interact(front, "Use %s  (%s upgrades)" % [String(info["crate"]).capitalize(), info["title"]], func(): _open_panel(track))
+	return body
 
-	_add_interact(crate.position, "Open %s crate  (%s upgrades)" % [info["crate"], info["title"]], func(): _open_panel(track))
 
-
-## Plain supply clutter that isn't interactive.
-func _add_prop_crate(pos: Vector3, yaw_deg: float, s: float) -> void:
-	var crate := StaticBody3D.new()
-	crate.position = pos + Vector3(0.0, _ground(pos), 0.0)
-	crate.rotation_degrees.y = yaw_deg
-	add_child(crate)
-	var size := Vector3(1.0, 0.7, 0.7) * s
-	_crate_mesh(crate, size, Color(0.22, 0.23, 0.22), Color(0.3, 0.3, 0.3))
-	var cs := CollisionShape3D.new()
-	var box := BoxShape3D.new()
-	box.size = size
-	cs.shape = box
-	cs.position.y = size.y * 0.5
-	crate.add_child(cs)
+func _yaw_to(from: Vector3, to: Vector3) -> float:
+	return rad_to_deg(atan2(to.x - from.x, to.z - from.z))
 
 
 func _build_crates() -> void:
+	var mid := CAVE + Vector3(0.0, 0.0, 0.5)
+	# Upgrade stations round the back of the cave.
+	var lp := Vector3(-5.6, 0.0, -19.6)
+	_add_station("ArmoryLocker", lp, _yaw_to(lp, mid), Vector3(1.28, 2.12, 0.66), "blaster", Color(0.9, 0.12, 0.08))
+	var mp := Vector3(0.0, 0.0, -25.2)
+	var med := _add_station("MedBench", mp, 0.0, Vector3(1.66, 1.9, 0.72), "armor", Color(0.45, 1.0, 0.7))
+	var dp := Vector3(5.5, 0.0, -19.8)
+	var droid_bench := _add_station("DroidBench", dp, _yaw_to(dp, mid), Vector3(1.92, 1.95, 0.84), "droid", Color(0.25, 0.6, 1.0))
+	_readable("Datapad", med, Vector3(-0.62, 0.862, 0.12), 15.0, "med_log")
+	_readable("Datapad", droid_bench, Vector3(-0.68, 0.902, 0.27), -10.0, "droid_manual")
+
+	# Two field beds either side of the fire, a cook pot over it.
+	_prop("Bed", BED_L, 4.0, Vector3(1.06, 0.6, 2.2))
+	_prop("Bed", BED_R, -4.0, Vector3(1.06, 0.6, 2.2))
+	_prop("CookPot", FIRE_POS, 20.0)
+	var stand := _prop("SupplyCrate", BED_L + Vector3(-1.05, 0.0, -0.75), 8.0, Vector3(1.0, 0.7, 0.7), 0.6)
+	_readable("Journal", stand, Vector3(0.05, 0.422, 0.02), -20.0, "survivor_journal")
+
+	# Supplies and clutter.
 	var c := CAVE
-	_add_crate(c + Vector3(-5.2, 0.0, -3.0), 55.0, "blaster", Color(0.2, 0.2, 0.22), Color(0.9, 0.12, 0.08))
-	_add_crate(c + Vector3(0.0, 0.0, -7.6), 0.0, "armor", Color(0.24, 0.24, 0.24), Color(0.95, 0.85, 0.85))
-	_add_crate(c + Vector3(5.2, 0.0, -3.0), -55.0, "droid", Color(0.2, 0.21, 0.24), Color(0.25, 0.6, 1.0))
-	# Clutter.
-	_add_prop_crate(c + Vector3(-6.2, 0.0, 1.5), 80.0, 1.0)
-	_add_prop_crate(c + Vector3(-6.0, 0.7, 1.4), 70.0, 0.8)
-	_add_prop_crate(c + Vector3(6.3, 0.0, 2.0), -75.0, 1.1)
-	_add_prop_crate(c + Vector3(2.8, 0.0, -8.0), 10.0, 0.9)
+	_prop("SupplyCrate", c + Vector3(-6.2, 0.0, 1.5), 80.0, Vector3(1.0, 0.7, 0.7))
+	var top := _prop("SupplyCrate", c + Vector3(-6.05, 0.7, 1.4), 68.0, Vector3(1.0, 0.7, 0.7), 0.8)
+	_readable("Datapad", top, Vector3(0.0, 0.562, 0.0), 30.0, "quartermaster")
+	var rc := _prop("SupplyCrate", c + Vector3(6.3, 0.0, 2.0), -75.0, Vector3(1.0, 0.7, 0.7), 1.1)
+	var radio := _prop("Radio", rc.position - Vector3(0.0, _ground(rc.position), 0.0) + Vector3(0.0, 0.77, 0.0), -75.0)
+	_add_interact(radio.global_position + Vector3(0.0, 0.2, 0.0), "Listen to the radio", func(): LorePanel.read(get_tree(), "radio"))
+	_prop("SupplyCrate", c + Vector3(2.8, 0.0, -8.0), 10.0, Vector3(1.0, 0.7, 0.7), 0.9)
+	_prop("Shelf", Vector3(-3.4, 0.0, -24.5), 25.0, Vector3(1.2, 1.85, 0.45))
+	_prop("Purifier", Vector3(-6.6, 0.0, -17.2), 80.0, Vector3(0.62, 1.15, 0.62))
+	var gen := _prop("Generator", Vector3(3.7, 0.0, -24.1), -20.0, Vector3(1.1, 1.4, 0.8))
+	var core := OmniLight3D.new()
+	core.light_color = Color(0.35, 0.75, 1.0)
+	core.light_energy = 0.9
+	core.omni_range = 3.5
+	core.position = Vector3(0.0, 1.05, 0.3)
+	gen.add_child(core)
+	var tw := core.create_tween().set_loops()
+	tw.tween_property(core, "light_energy", 1.2, 1.4).set_trans(Tween.TRANS_SINE)
+	tw.tween_property(core, "light_energy", 0.7, 1.4).set_trans(Tween.TRANS_SINE)
+	_prop("Rug", Vector3(0.0, 0.0, -20.6), 0.0)
+	var holo := _prop("HoloMap", Vector3(0.0, 0.0, -20.6), 0.0, Vector3(1.0, 0.9, 1.0))
+	var hl := OmniLight3D.new()
+	hl.light_color = Color(1.0, 0.75, 0.4)
+	hl.light_energy = 0.7
+	hl.omni_range = 2.5
+	hl.position = Vector3(0.0, 1.3, 0.0)
+	holo.add_child(hl)
+	_add_interact(holo.global_position + Vector3(0.0, 0.9, 0.0), "Read: Survey Map", func(): LorePanel.read(get_tree(), "survey_map"))
 
-	# A salvaged work lamp at the back of the cave.
-	var lamp := OmniLight3D.new()
-	lamp.light_color = Color(0.75, 0.85, 1.0)
-	lamp.light_energy = 1.4
-	lamp.omni_range = 9.0
-	lamp.shadow_enabled = true
-	lamp.position = c + Vector3(0.0, 3.5, -5.0)
-	add_child(lamp)
-	var bulb := MeshInstance3D.new()
-	var bs := SphereMesh.new()
-	bs.radius = 0.12
-	bs.height = 0.24
-	bulb.mesh = bs
-	bulb.material_override = U.mat(Color(0.8, 0.9, 1.0), 0.3, Color(0.75, 0.85, 1.0), 6.0)
-	bulb.position = lamp.position
-	add_child(bulb)
-
-	# Bedroll by the fire.
-	var bed := MeshInstance3D.new()
-	var bm := BoxMesh.new()
-	bm.size = Vector3(0.8, 0.12, 2.0)
-	bed.mesh = bm
-	bed.material_override = U.mat(Color(0.32, 0.08, 0.07), 0.95)
-	bed.position = FIRE_POS + Vector3(-2.4, 0.06, -1.0)
-	bed.rotation_degrees.y = 20.0
-	add_child(bed)
+	# Work lamps light the back of the cave (replacing the old bare bulb).
+	for spec in [[Vector3(-3.9, 0.0, -22.3), true], [Vector3(3.9, 0.0, -22.1), false]]:
+		var lpos: Vector3 = spec[0]
+		var lamp := _prop("WorkLamp", lpos, _yaw_to(lpos, mid), Vector3(0.3, 2.0, 0.3))
+		var spot := SpotLight3D.new()
+		spot.light_color = Color(1.0, 0.9, 0.75)
+		spot.light_energy = 3.0
+		spot.spot_range = 12.0
+		spot.spot_angle = 55.0
+		spot.shadow_enabled = spec[1]
+		spot.position = Vector3(0.0, 1.9, 0.12)
+		spot.rotation = Vector3(-0.45, PI, 0.0)
+		lamp.add_child(spot)
 
 
 # ---------------------------------------------------------------- trail back
 
+## The way back to the crash site: no sign, just a gap in the trees where the
+## path squeezes between two mossy boulders, a fallen log beside it and
+## ferns closing in.
 func _build_trail_exit() -> void:
 	var pos := Vector3(0.0, 0.0, 24.0)
 	pos.y = _ground(pos)
-	var signpost := StaticBody3D.new()
-	signpost.position = pos
-	add_child(signpost)
-	var wood := U.mat(Color(0.3, 0.2, 0.12), 0.95)
-	var post := MeshInstance3D.new()
-	var pm := BoxMesh.new()
-	pm.size = Vector3(0.14, 2.0, 0.14)
-	post.mesh = pm
-	post.position.y = 1.0
-	post.material_override = wood
-	signpost.add_child(post)
-	var board := MeshInstance3D.new()
-	var bm := BoxMesh.new()
-	bm.size = Vector3(1.5, 0.4, 0.06)
-	board.mesh = bm
-	board.position = Vector3(0.0, 1.7, 0.08)
-	board.material_override = wood
-	signpost.add_child(board)
-	var tag := Label3D.new()
-	tag.text = "CRASH SITE"
-	tag.font_size = 40
-	tag.pixel_size = 0.005
-	tag.outline_size = 8
-	tag.position = Vector3(0.0, 1.7, 0.12)
-	tag.billboard = BaseMaterial3D.BILLBOARD_FIXED_Y
-	signpost.add_child(tag)
-	var cs := CollisionShape3D.new()
-	var shape := BoxShape3D.new()
-	shape.size = Vector3(0.3, 2.0, 0.3)
-	cs.shape = shape
-	cs.position.y = 1.0
-	signpost.add_child(cs)
+	var scenes := []
+	for path in ROCK_SCENES:
+		if ResourceLoader.exists(path):
+			scenes.append(load(path))
+	var r := RandomNumberGenerator.new()
+	r.seed = 24
+	if not scenes.is_empty():
+		for spec in [[Vector3(-2.9, 0.0, 0.4), 0.85], [Vector3(3.1, 0.0, -0.6), 0.7], [Vector3(-4.3, 0.0, 2.2), 0.5], [Vector3(4.4, 0.0, 1.6), 0.45]]:
+			var rp: Vector3 = pos + spec[0]
+			var rock: Node3D = scenes[r.randi() % scenes.size()].instantiate()
+			rock.scale = Vector3.ONE * float(spec[1]) * r.randf_range(0.9, 1.1)
+			rock.rotation = Vector3(0.0, r.randf() * TAU, r.randf_range(-0.15, 0.15))
+			rock.position = Vector3(rp.x, _ground(rp) - 0.4, rp.z)
+			add_child(rock)
+	var log_mesh := WK.model_mesh("FallenLog")
+	if log_mesh != null:
+		var lg := MeshInstance3D.new()
+		lg.mesh = log_mesh
+		var lp := pos + Vector3(-4.0, 0.0, -1.4)
+		lg.position = Vector3(lp.x, _ground(lp) - 0.12, lp.z)
+		lg.rotation = Vector3(0.0, deg_to_rad(62.0), deg_to_rad(-4.0))
+		add_child(lg)
+		var body := StaticBody3D.new()
+		var cs := CollisionShape3D.new()
+		var cap := CapsuleShape3D.new()
+		cap.radius = 0.34
+		cap.height = 5.0
+		cs.shape = cap
+		cs.rotation.z = PI * 0.5
+		body.add_child(cs)
+		body.position = lg.position + Vector3(0.0, 0.3, 0.0)
+		body.rotation = lg.rotation
+		add_child(body)
+	_scatter(["Fern_1", "Plant_1_Big", "Bush_Common", "Grass_Wispy_Tall", "Grass_Common_Tall"], pos, 2.2, 6.5, 46, 0.7, 1.4, 25)
+	_scatter(["Fern_1", "Grass_Wispy_Short", "Clover_1"], pos + Vector3(0.0, 0.0, -2.5), 1.2, 3.0, 14, 0.5, 0.9, 26)
+	_add_interact(pos + Vector3(0.0, 1.0, 0.0), "Follow the trail back to the crash site (fight for more salvage)", func(): get_tree().change_scene_to_file(CRASH_SITE))
 
-	_add_interact(pos, "Head back to the crash site (fight for more salvage)", func(): get_tree().change_scene_to_file(CRASH_SITE))
+
+## A few cherry trees in full blossom scattered through the open valley.
+const CHERRY_SPOTS := [Vector3(-13.0, 0.0, 15.0), Vector3(15.5, 0.0, 19.0), Vector3(-24.0, 0.0, 2.0), Vector3(30.0, 0.0, 26.0),
+	Vector3(-33.0, 0.0, 33.0), Vector3(26.0, 0.0, -14.0), Vector3(-9.0, 0.0, 34.0)]
+
+func _build_cherry_trees() -> void:
+	var r := RandomNumberGenerator.new()
+	r.seed = 88
+	for i in CHERRY_SPOTS.size():
+		var p: Vector3 = CHERRY_SPOTS[i]
+		var mesh := WK.model_mesh("Cherry_%d" % (i % 3 + 1))
+		if mesh == null:
+			return
+		var s := r.randf_range(1.1, 1.4)
+		p.y = _ground(p) - 0.12
+		WK.place(self, mesh, Transform3D(Basis(Vector3.UP, r.randf() * TAU).scaled(Vector3.ONE * s), p))
+		WK.trunk_collider(self, p, s * 0.95)
 
 
 # ---------------------------------------------------------------- forest
@@ -824,16 +961,21 @@ func _build_forest() -> void:
 	var buckets := {}
 	var tries := 0
 	var placed := 0
-	while placed < 520 and tries < 5000:
+	while placed < 1150 and tries < 14000:
 		tries += 1
 		var a := rng.randf() * TAU
-		var r := sqrt(rng.randf_range(16.0 * 16.0, 90.0 * 90.0))
+		var r := sqrt(rng.randf_range(16.0 * 16.0, 150.0 * 150.0))
 		var p := Vector3(VALLEY_CENTER.x + cos(a) * r, 0.0, VALLEY_CENTER.y + sin(a) * r)
 		# Keep the cave mouth, the path and the cave itself clear.
 		var e := Vector2(p.x / (CAVE_R.x + 3.0), (p.z - CAVE.z) / (CAVE_R.z + 3.0)).length()
 		if e < 1.0:
 			continue
 		if absf(p.x) < 9.0 and p.z > CAVE.z and p.z < 30.0:
+			continue
+		if _landmark_clear(p, 4.0):
+			continue
+		# The open valley gets scattered groves; the dense forest starts at the hills.
+		if r < 70.0 and _noise_hill.get_noise_2d(p.x * 4.0, p.z * 4.0) < 0.12:
 			continue
 		p.y = _ground(p) - 0.15
 		var roll := rng.randf()
@@ -844,10 +986,10 @@ func _build_forest() -> void:
 			mesh = leafy[rng.randi() % leafy.size()]
 		var s := rng.randf_range(1.5, 2.4)
 		WK.add_instance(buckets, mesh, p, s, rng)
-		if r < 40.0:
+		if r < 92.0:
 			WK.trunk_collider(self, p, s)
 		placed += 1
-	WK.plant(self, buckets, 220.0)
+	WK.plant(self, buckets, 260.0)
 
 	var small_names := ["Bush_Common", "Bush_Common_Flowers", "Fern_1", "Plant_1_Big", "Mushroom_Common", "Rock_Medium_1", "Rock_Medium_2"]
 	var scales := [Vector2(0.9, 1.5), Vector2(0.9, 1.4), Vector2(0.15, 0.25), Vector2(0.6, 1.0), Vector2(0.8, 1.3), Vector2(0.5, 1.1), Vector2(0.5, 1.1)]
@@ -861,18 +1003,31 @@ func _build_forest() -> void:
 	if small.is_empty():
 		return
 	var sb := {}
-	for i in 260:
+	for i in 760:
 		var a := rng.randf() * TAU
-		var r := rng.randf_range(9.0, 36.0)
+		var r := rng.randf_range(9.0, 80.0)
 		var p := Vector3(VALLEY_CENTER.x + cos(a) * r, 0.0, VALLEY_CENTER.y + sin(a) * r)
 		var e := Vector2(p.x / (CAVE_R.x + 1.5), (p.z - CAVE.z) / (CAVE_R.z + 1.5)).length()
-		if e < 1.0 or (absf(p.x) < 3.0 and p.z > CAVE.z):
+		if e < 1.0 or (absf(p.x) < 3.0 and p.z > CAVE.z) or _landmark_clear(p, 0.0):
 			continue
 		p.y = _ground(p) - 0.05
 		var k := rng.randi() % small.size()
 		var sc: Vector2 = small_scales[k]
 		WK.add_instance(sb, small[k], p, rng.randf_range(sc.x, sc.y), rng)
-	WK.plant(self, sb, 90.0)
+	WK.plant(self, sb, 110.0)
+
+
+## True where trees and clutter should stay clear (water, landmarks, the pod).
+func _landmark_clear(p: Vector3, pad: float) -> bool:
+	var q := Vector2(p.x, p.z)
+	for c in CHERRY_SPOTS:
+		if q.distance_to(Vector2(c.x, c.z)) < 4.0 + pad * 0.5:
+			return true
+	return q.distance_to(Vector2(LAKE.x, LAKE.z)) < LAKE_R + 2.0 + pad \
+		or q.distance_to(Vector2(SPIRES.x, SPIRES.z)) < 13.0 + pad \
+		or q.distance_to(Vector2(OUTPOST.x, OUTPOST.z)) < 16.0 + pad \
+		or q.distance_to(Vector2(MEADOW.x, MEADOW.z)) < 9.0 + pad \
+		or q.distance_to(Vector2(POD_POS.x, POD_POS.z)) < 6.0 + pad
 
 
 # ---------------------------------------------------------------- UI
@@ -893,7 +1048,12 @@ func _build_ui() -> void:
 	hint.anchor_top = 1.0
 	hint.anchor_bottom = 1.0
 	hint.anchor_right = 1.0
-	hint.offset_top = -40
+	hint.offset_top = -66
+	hint.offset_bottom = -14
+	hint.vertical_alignment = VERTICAL_ALIGNMENT_BOTTOM
+	hint.offset_left = 390
+	hint.offset_right = -390
+	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	root.add_child(hint)
 
@@ -1083,7 +1243,7 @@ func _add_interact(pos: Vector3, prompt: String, action: Callable):
 
 # ---------------------------------------------------------------- crafting bench
 
-const BENCH_POS := Vector3(-4.6, 0.0, -13.2)
+const BENCH_POS := Vector3(-5.35, 0.0, -13.4)
 
 func _build_bench() -> void:
 	var p := BENCH_POS + Vector3(0.0, _ground(BENCH_POS), 0.0)
@@ -1118,75 +1278,25 @@ func _update_bench() -> void:
 	if _bench_model != null:
 		_bench_model.queue_free()
 		_bench_model = null
-	var p := BENCH_POS + Vector3(0.0, _ground(BENCH_POS), 0.0)
-	_bench_model = StaticBody3D.new()
-	_bench_model.position = p
-	_bench_model.rotation_degrees.y = 70.0
-	add_child(_bench_model)
-	if GS.bench_level <= 0:
-		# A marked-out spot with a few planks lying ready.
-		var plank := U.mat(Color(0.4, 0.28, 0.16), 0.95)
-		for i in 3:
-			var mi := MeshInstance3D.new()
-			var b := BoxMesh.new()
-			b.size = Vector3(1.4, 0.05, 0.2)
-			mi.mesh = b
-			mi.material_override = plank
-			mi.position = Vector3(0.0, 0.03 + i * 0.05, -0.25 + i * 0.25)
-			mi.rotation.y = randf_range(-0.2, 0.2)
-			_bench_model.add_child(mi)
+	var lv := clampi(GS.bench_level, 0, 2)
+	_bench_model = _prop("CraftBench%d" % lv, BENCH_POS, 70.0, Vector3.ZERO if lv == 0 else Vector3(1.8, 0.95, 0.8))
+	if lv <= 0:
 		return
-	var wood := U.mat(Color(0.38, 0.26, 0.15), 0.9)
-	var metal := U.mat(Color(0.3, 0.31, 0.33), 0.5)
-	metal.metallic = 0.7
-	var top := MeshInstance3D.new()
-	var tb := BoxMesh.new()
-	tb.size = Vector3(1.8, 0.08, 0.8)
-	top.mesh = tb
-	top.material_override = wood if GS.bench_level < 2 else metal
-	top.position.y = 0.9
-	_bench_model.add_child(top)
-	for x in [-0.8, 0.8]:
-		for z in [-0.32, 0.32]:
-			var leg := MeshInstance3D.new()
-			var lb := BoxMesh.new()
-			lb.size = Vector3(0.08, 0.9, 0.08)
-			leg.mesh = lb
-			leg.material_override = wood
-			leg.position = Vector3(x, 0.45, z)
-			_bench_model.add_child(leg)
-	# Vise, tools and (at level 2) a lamp and power cell.
-	var vise := MeshInstance3D.new()
-	var vb := BoxMesh.new()
-	vb.size = Vector3(0.25, 0.18, 0.2)
-	vise.mesh = vb
-	vise.material_override = metal
-	vise.position = Vector3(-0.6, 1.03, 0.0)
-	_bench_model.add_child(vise)
-	if GS.bench_level >= 2:
-		var cell := MeshInstance3D.new()
-		var cm := CylinderMesh.new()
-		cm.top_radius = 0.1
-		cm.bottom_radius = 0.1
-		cm.height = 0.3
-		cell.mesh = cm
-		cell.material_override = U.mat(Color(0.2, 0.5, 0.9), 0.3, Color(0.3, 0.6, 1.0), 2.0)
-		cell.position = Vector3(0.6, 1.09, 0.1)
-		_bench_model.add_child(cell)
-	var cs := CollisionShape3D.new()
-	var bs := BoxShape3D.new()
-	bs.size = Vector3(1.8, 0.95, 0.8)
-	cs.shape = bs
-	cs.position.y = 0.47
-	_bench_model.add_child(cs)
 	var tag := Label3D.new()
 	tag.text = "CRAFTING BENCH  Lv%d" % GS.bench_level
 	tag.font_size = 36
 	tag.pixel_size = 0.004
 	tag.outline_size = 8
 	tag.billboard = BaseMaterial3D.BILLBOARD_FIXED_Y
-	tag.position = Vector3(0.0, 1.5, 0.0)
+	tag.position = Vector3(0.0, 1.75, 0.0)
 	_bench_model.add_child(tag)
+	if lv >= 2:
+		var l := OmniLight3D.new()
+		l.light_color = Color(1.0, 0.85, 0.6)
+		l.light_energy = 0.8
+		l.omni_range = 2.5
+		l.position = Vector3(-0.55, 1.55, 0.0)
+		_bench_model.add_child(l)
 
 
 # ---------------------------------------------------------------- resources
@@ -1202,14 +1312,14 @@ func _build_resources() -> void:
 		var q: Vector3 = wp
 		q.y = _ground(q)
 		Pickup.spawn(self, "resource", "wood", q, Vector2i(1, 2))
-	var spots := {"wood": 12, "fiber": 10, "ore": 5}
+	var spots := {"wood": 22, "fiber": 20, "ore": 8}
 	for id in spots:
 		for i in spots[id]:
 			var a := r.randf() * TAU
-			var d := r.randf_range(8.0, 30.0)
+			var d := r.randf_range(8.0, 66.0)
 			var p := Vector3(VALLEY_CENTER.x + cos(a) * d, 0.0, VALLEY_CENTER.y + sin(a) * d)
 			var e := Vector2(p.x / (CAVE_R.x + 2.0), (p.z - CAVE.z) / (CAVE_R.z + 2.0)).length()
-			if e < 1.0:
+			if e < 1.0 or Vector2(p.x - LAKE.x, p.z - LAKE.z).length() < LAKE_R + 1.0:
 				continue
 			p.y = _ground(p)
 			Pickup.spawn(self, "resource", id, p, Vector2i(1, 2))
@@ -1220,11 +1330,7 @@ func _build_resources() -> void:
 		Pickup.spawn(self, "tree", "", tp)
 		var pine := WK.model_mesh("Pine_2")
 		if pine != null:
-			var mi := MeshInstance3D.new()
-			mi.mesh = pine
-			mi.scale = Vector3.ONE * 1.9
-			mi.position = tp + Vector3(0.0, -0.15, 0.0)
-			add_child(mi)
+			WK.place(self, pine, Transform3D(Basis.IDENTITY.scaled(Vector3.ONE * 1.9), tp + Vector3(0.0, -0.15, 0.0)))
 		WK.trunk_collider(self, tp, 1.9)
 	for v in [Vector3(-11, 0, -8), Vector3(12, 0, -10)]:
 		var vp: Vector3 = v
@@ -1234,7 +1340,7 @@ func _build_resources() -> void:
 
 ## A crashed escape pod east of camp: scrap, plastic and supply crates.
 func _build_pod_wreck() -> void:
-	var c := Vector3(20.0, 0.0, 12.0)
+	var c := POD_POS
 	c.y = _ground(c)
 	var hull := U.mat(Color(0.2, 0.21, 0.23), 0.5)
 	hull.metallic = 0.6
@@ -1283,3 +1389,433 @@ func _build_pod_wreck() -> void:
 	tag.modulate = Color(1.0, 0.7, 0.4)
 	tag.position = c + Vector3(0.0, 3.2, 0.0)
 	add_child(tag)
+
+
+# ---------------------------------------------------------------- compass
+
+## Where the current camp quest wants you to go (gold marker on the compass).
+func _quest_target():
+	var q := GS.current_quest()
+	if q.is_empty():
+		return null
+	for g in q["goals"]:
+		var id: String = g[0]
+		if GS.goal_done(id):
+			continue
+		var parts := id.split(":")
+		match parts[0]:
+			"talk":
+				return ally.global_position if is_instance_valid(ally) else null
+			"have":
+				if parts[1] == "tech":
+					return _nearest_pickup("crate", "")
+				if parts[1] == "scrap":
+					var sp = _nearest_pickup("resource", "scrap")
+					return sp if sp != null else POD_POS
+				return _nearest_pickup("resource", parts[1])
+			"bench", "crafted", "equipped_module":
+				return BENCH_POS + Vector3(0.0, _ground(BENCH_POS), 0.0)
+			"chopped":
+				return _nearest_pickup("tree", "")
+			_:
+				return null
+	return null
+
+
+func _nearest_pickup(kind: String, id: String):
+	var best = null
+	var bd := INF
+	var from: Vector3 = player.global_position if is_instance_valid(player) else Vector3.ZERO
+	for n in get_tree().get_nodes_in_group("interactable"):
+		if not ("kind" in n) or n.kind != kind or (id != "" and n.item_id != id):
+			continue
+		if not n.enabled or not n.is_visible_in_tree():
+			continue
+		var d := from.distance_squared_to(n.global_position)
+		if d < bd:
+			bd = d
+			best = n.global_position
+	return best
+
+
+# ---------------------------------------------------------------- landmarks
+
+func _mat(col: Color, rough: float, metal := 0.0, emit := Color.BLACK, emit_e := 0.0) -> StandardMaterial3D:
+	var m := U.mat(col, rough, emit, emit_e) if emit_e > 0.0 else U.mat(col, rough)
+	m.metallic = metal
+	return m
+
+
+func _box(parent: Node3D, size: Vector3, pos: Vector3, mat: Material, solid := true, rot := Vector3.ZERO) -> MeshInstance3D:
+	var mi := MeshInstance3D.new()
+	var bm := BoxMesh.new()
+	bm.size = size
+	mi.mesh = bm
+	mi.material_override = mat
+	mi.position = pos
+	mi.rotation = rot
+	parent.add_child(mi)
+	if solid:
+		var body := StaticBody3D.new()
+		var cs := CollisionShape3D.new()
+		var sh := BoxShape3D.new()
+		sh.size = size
+		cs.shape = sh
+		body.add_child(cs)
+		body.position = pos
+		body.rotation = rot
+		parent.add_child(body)
+	return mi
+
+
+func _sign(text: String, pos: Vector3, col: Color) -> void:
+	var tag := Label3D.new()
+	tag.text = text
+	tag.font_size = 42
+	tag.pixel_size = 0.006
+	tag.outline_size = 10
+	tag.modulate = col
+	tag.billboard = BaseMaterial3D.BILLBOARD_FIXED_Y
+	tag.position = pos
+	add_child(tag)
+
+
+func _scatter(names: Array, center: Vector3, r0: float, r1: float, count: int, s0: float, s1: float, seed_v: int, vis := 120.0) -> void:
+	var meshes := WK.meshes(names)
+	if meshes.is_empty():
+		return
+	var r := RandomNumberGenerator.new()
+	r.seed = seed_v
+	var b := {}
+	for i in count:
+		var a := r.randf() * TAU
+		var d := sqrt(r.randf_range(r0 * r0, r1 * r1))
+		var p := center + Vector3(cos(a) * d, 0.0, sin(a) * d)
+		p.y = _ground(p) - 0.05
+		WK.add_instance(b, meshes[r.randi() % meshes.size()], p, r.randf_range(s0, s1), r)
+	WK.plant(self, b, vis)
+
+
+## A still lake in the east of the valley, with reeds and a small jetty.
+func _build_lake() -> void:
+	var water := MeshInstance3D.new()
+	var disc := CylinderMesh.new()
+	disc.top_radius = LAKE_R + 7.0
+	disc.bottom_radius = LAKE_R + 7.0
+	disc.height = 0.04
+	disc.radial_segments = 64
+	water.mesh = disc
+	var sh := Shader.new()
+	sh.code = """
+shader_type spatial;
+render_mode blend_mix, depth_draw_opaque, cull_back, specular_schlick_ggx;
+uniform vec3 deep : source_color = vec3(0.03, 0.14, 0.18);
+uniform vec3 shallow : source_color = vec3(0.14, 0.36, 0.40);
+void fragment() {
+	vec2 w = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xz;
+	float t = TIME;
+	vec3 n = normalize(vec3(
+		sin(w.x * 1.3 + t * 1.1) * 0.07 + sin((w.x + w.y) * 2.7 + t * 1.6) * 0.035,
+		1.0,
+		cos(w.y * 1.6 + t * 0.9) * 0.07 + cos((w.x - w.y) * 2.3 - t * 1.3) * 0.035));
+	NORMAL = normalize((VIEW_MATRIX * vec4(n, 0.0)).xyz);
+	float fres = pow(1.0 - clamp(dot(NORMAL, VIEW), 0.0, 1.0), 3.0);
+	ALBEDO = mix(deep, shallow, 0.3 + 0.2 * fres);
+	ROUGHNESS = 0.05;
+	METALLIC = 0.1;
+	SPECULAR = 0.7;
+	ALPHA = mix(0.8, 0.97, fres);
+}
+"""
+	var wm := ShaderMaterial.new()
+	wm.shader = sh
+	water.material_override = wm
+	water.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	water.position = Vector3(LAKE.x, WATER_Y, LAKE.z)
+	add_child(water)
+	# Wade in to your knees, no further.
+	var block := StaticBody3D.new()
+	var cs := CollisionShape3D.new()
+	var cyl := CylinderShape3D.new()
+	cyl.radius = LAKE_R - 4.5
+	cyl.height = 8.0
+	cs.shape = cyl
+	block.add_child(cs)
+	block.position = Vector3(LAKE.x, 2.0, LAKE.z)
+	add_child(block)
+	# Reeds, ferns and pebbles round the shore.
+	_scatter(["Grass_Wispy_Tall", "Grass_Common_Tall", "Plant_7_Big", "Fern_1"], LAKE, LAKE_R - 1.0, LAKE_R + 4.0, 140, 0.8, 1.6, 51)
+	_scatter(["Pebble_Round_1", "Pebble_Round_2", "Pebble_Round_3", "Pebble_Square_2"], LAKE, LAKE_R - 2.0, LAKE_R + 3.0, 60, 0.8, 2.0, 52)
+	# A weathered jetty from the west shore (models/dock.glb, runs along local -Z).
+	var dir := Vector3(-1.0, 0.0, 0.25).normalized()
+	var start := LAKE + dir * (LAKE_R + 4.5)
+	var jetty := StaticBody3D.new()
+	jetty.name = "Dock"
+	jetty.position = Vector3(start.x, WATER_Y + 0.4, start.z)
+	jetty.rotation.y = atan2(dir.x, dir.z)
+	add_child(jetty)
+	if ResourceLoader.exists("res://models/dock.glb"):
+		var dock: Node3D = load("res://models/dock.glb").instantiate()
+		jetty.add_child(dock)
+		var lamp_at := dock.find_child("LampLight", true, false) as Node3D
+		if lamp_at != null:
+			var ll := OmniLight3D.new()
+			ll.light_color = Color(0.45, 0.85, 1.0)
+			ll.light_energy = 1.4
+			ll.omni_range = 7.0
+			ll.position = lamp_at.position
+			jetty.add_child(ll)
+			var tw := ll.create_tween().set_loops()
+			tw.tween_property(ll, "light_energy", 1.4, 3.0)
+			tw.tween_property(ll, "light_energy", 0.2, 0.06)
+			tw.tween_property(ll, "light_energy", 1.3, 0.1)
+			tw.tween_property(ll, "light_energy", 0.4, 0.05)
+			tw.tween_property(ll, "light_energy", 1.4, 0.12)
+	# Walkable surfaces: walkway, end platform, gangway up to the shore.
+	for spec in [[Vector3(2.4, 0.12, 6.7), Vector3(0.0, -0.06, -3.3), 0.0],
+			[Vector3(3.9, 0.12, 2.3), Vector3(0.0, -0.06, -7.7), 0.0],
+			[Vector3(2.2, 0.1, 1.75), Vector3(0.0, 0.14, 0.82), 0.22]]:
+		var deck_cs := CollisionShape3D.new()
+		var deck_box := BoxShape3D.new()
+		deck_box.size = spec[0]
+		deck_cs.shape = deck_box
+		deck_cs.position = spec[1]
+		deck_cs.rotation.x = spec[2]
+		jetty.add_child(deck_cs)
+	_sign("STILLWATER", LAKE + Vector3(0.0, 4.0, 0.0), Color(0.75, 0.9, 1.0))
+
+
+## Tall rock spires in the west with glowing crystal growths and two ore veins.
+func _build_spires() -> void:
+	var scenes := []
+	for path in ROCK_SCENES:
+		if ResourceLoader.exists(path):
+			scenes.append(load(path))
+	if scenes.is_empty():
+		return
+	var r := RandomNumberGenerator.new()
+	r.seed = 77
+	var spots := [Vector3(-4, 0, -3), Vector3(5, 0, -5), Vector3(-7, 0, 6), Vector3(3, 0, 7), Vector3(9, 0, 1), Vector3(-10, 0, -8), Vector3(0, 0, 11)]
+	for k in spots.size():
+		var p: Vector3 = SPIRES + spots[k]
+		var rock: Node3D = scenes[r.randi() % scenes.size()].instantiate()
+		var s := r.randf_range(0.7, 1.05)
+		rock.scale = Vector3(s, s * r.randf_range(2.4, 3.6), s)
+		rock.rotation = Vector3(r.randf_range(-0.08, 0.08), r.randf() * TAU, r.randf_range(-0.08, 0.08))
+		rock.position = p + Vector3(0.0, _ground(p) - 0.6, 0.0)
+		add_child(rock)
+	# Natural arch between two spires.
+	var cap: Node3D = scenes[0].instantiate()
+	cap.scale = Vector3(1.6, 0.45, 0.55)
+	cap.position = SPIRES + Vector3(0.5, _ground(SPIRES) + 7.4, -4.0)
+	cap.rotation = Vector3(0.0, 0.1, 0.12)
+	add_child(cap)
+	# Crystal clusters.
+	var crystal := StandardMaterial3D.new()
+	crystal.albedo_color = Color(0.35, 0.85, 1.0, 0.85)
+	crystal.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	crystal.emission_enabled = true
+	crystal.emission = Color(0.2, 0.75, 1.0)
+	crystal.emission_energy_multiplier = 2.4
+	crystal.roughness = 0.1
+	for k in 9:
+		var a := r.randf() * TAU
+		var p2 := SPIRES + Vector3(cos(a), 0.0, sin(a)) * r.randf_range(2.0, 11.0)
+		var cl := Node3D.new()
+		cl.position = p2 + Vector3(0.0, _ground(p2) - 0.1, 0.0)
+		add_child(cl)
+		for c in r.randi_range(3, 6):
+			var mi := MeshInstance3D.new()
+			var pm := CylinderMesh.new()
+			pm.top_radius = 0.0
+			pm.bottom_radius = r.randf_range(0.08, 0.18)
+			pm.height = r.randf_range(0.5, 1.4)
+			pm.radial_segments = 6
+			pm.rings = 1
+			mi.mesh = pm
+			mi.material_override = crystal
+			mi.position = Vector3(r.randf_range(-0.3, 0.3), pm.height * 0.4, r.randf_range(-0.3, 0.3))
+			mi.rotation = Vector3(r.randf_range(-0.5, 0.5), r.randf() * TAU, r.randf_range(-0.5, 0.5))
+			cl.add_child(mi)
+		var glow := OmniLight3D.new()
+		glow.light_color = Color(0.3, 0.8, 1.0)
+		glow.light_energy = 1.2
+		glow.omni_range = 4.0
+		glow.position.y = 0.6
+		cl.add_child(glow)
+	for v in [Vector3(-2, 0, 2), Vector3(6, 0, -1)]:
+		var vp: Vector3 = SPIRES + v
+		vp.y = _ground(vp)
+		Pickup.spawn(self, "vein", "ore", vp)
+	_scatter(["Rock_Medium_1", "Rock_Medium_2", "Rock_Medium_3", "Pebble_Square_1", "Pebble_Square_4"], SPIRES, 2.0, 14.0, 70, 0.6, 1.6, 78)
+	_sign("CRYSTAL SPIRES", SPIRES + Vector3(0.0, _ground(SPIRES) + 9.5, 0.0), Color(0.6, 0.9, 1.0))
+
+
+## An abandoned survey outpost to the north-east: two damaged prefab
+## buildings (models/outpost_hab.glb, outpost_lab.glb) you can walk into
+## through their sliding doors, with loot inside.
+const OUTPOST_BUILDINGS := [
+	["res://models/outpost_hab.glb", Vector3(-4.5, 0.0, 2.0), 0.0, "HABITAT"],
+	["res://models/outpost_lab.glb", Vector3(6.0, 0.0, -3.5), 25.0, "SURVEY LAB"],
+]
+
+func _build_outpost() -> void:
+	var base_y := _ground(OUTPOST)
+	# Doors face back towards the cave.
+	var to_cave := Vector3(CAVE.x - OUTPOST.x, 0.0, CAVE.z - OUTPOST.z)
+	var face := atan2(to_cave.x, to_cave.z)
+	for b in OUTPOST_BUILDINGS:
+		if not ResourceLoader.exists(b[0]):
+			continue
+		var root := Node3D.new()
+		var off: Vector3 = (b[1] as Vector3).rotated(Vector3.UP, face)
+		root.position = OUTPOST + off + Vector3(0.0, base_y, 0.0)
+		root.rotation.y = face + deg_to_rad(b[2])
+		add_child(root)
+		var inst: Node3D = load(b[0]).instantiate()
+		root.add_child(inst)
+		var shell := inst.find_child("Shell", true, false) as MeshInstance3D
+		if shell != null:
+			var body := StaticBody3D.new()
+			var cs := CollisionShape3D.new()
+			var shape := shell.mesh.create_trimesh_shape()
+			shape.backface_collision = true
+			cs.shape = shape
+			body.add_child(cs)
+			shell.add_child(body)
+		var door := inst.find_child("Door", true, false) as Node3D
+		if door != null:
+			_make_door(door, root)
+		var ladder := inst.find_child("Ladder", true, false) as MeshInstance3D
+		if ladder != null:
+			# Climb zone round the ladder (its local +X points away from the wall).
+			var roof := ladder.get_aabb().end.y - 1.05
+			var zone := Node3D.new()
+			zone.name = "LadderZone"
+			zone.add_to_group("ladder")
+			zone.set_meta("centre", Vector3(-0.05, (roof + 1.0) * 0.5, 0.0))
+			zone.set_meta("half", Vector3(0.95, (roof + 1.6) * 0.5, 0.45))
+			zone.set_meta("roof", roof)
+			ladder.add_child(zone)
+		var growth := inst.find_child("Overgrowth", true, false) as GeometryInstance3D
+		if growth != null:
+			growth.visibility_range_end = 90.0
+		_building_lights(root, b[3] == "HABITAT")
+		# Loot inside.
+		for c in ([Vector3(-2.6, 0.08, 0.6), Vector3(2.2, 0.08, -1.2)] if b[3] == "HABITAT" else [Vector3(-1.0, 0.08, 1.4), Vector3(1.6, 0.08, 1.6)]):
+			Pickup.spawn(self, "crate", "", root.global_transform * c)
+		Pickup.spawn(self, "resource", "tech", root.global_transform * Vector3(0.6, 0.1, 0.4), Vector2i(1, 2))
+		if _props_lib == null and ResourceLoader.exists(PROPS_GLB):
+			_props_lib = load(PROPS_GLB).instantiate()
+		if b[3] == "HABITAT":
+			_readable("Datapad", root, Vector3(-0.35, 0.812, 0.15), 20.0, "k7_roster")
+		else:
+			_readable("Datapad", root, Vector3(-1.8, 0.902, -2.3), -15.0, "specimen_log")
+	_sign("SURVEY OUTPOST K-7", OUTPOST + Vector3(0.0, base_y + 6.0, 0.0), Color(1.0, 0.75, 0.6))
+
+
+## Split sliding door: E opens / closes it; the two halves part sideways
+## into the wall.
+func _make_door(door: Node3D, building: Node3D) -> void:
+	var closed_x := door.position.x
+	var right := door.duplicate() as Node3D
+	door.get_parent().add_child(right)
+	var halves := [door, right]
+	for k in 2:
+		var h: Node3D = halves[k]
+		h.scale.x = 0.5
+		h.position.x = closed_x + (-0.375 if k == 0 else 0.375)
+		var body := StaticBody3D.new()
+		var cs := CollisionShape3D.new()
+		var sh := BoxShape3D.new()
+		sh.size = Vector3(1.5, 2.3, 0.14)   # scaled to 0.75 wide with the half
+		cs.shape = sh
+		cs.position.y = 1.15
+		body.add_child(cs)
+		h.add_child(body)
+	var it := Interactable.new()
+	it.reach = 2.6
+	it.position = door.position + Vector3(0.375, 1.0, 1.0)
+	building.add_child(it)
+	var state := {"open": false, "busy": false}
+	var refresh := func():
+		it.prompt = "Close door" if state["open"] else "Open door"
+	refresh.call()
+	it.action = func():
+		if state["busy"]:
+			return
+		state["busy"] = true
+		state["open"] = not state["open"]
+		Sfx.at(door.global_position, "crate_open", -4.0, 0.0, 6.0)
+		var tw := door.create_tween().set_parallel(true)
+		tw.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
+		var gap := 0.72 if state["open"] else 0.0
+		tw.tween_property(door, "position:x", closed_x - 0.375 - gap, 0.55)
+		tw.tween_property(right, "position:x", closed_x + 0.375 + gap, 0.55)
+		tw.chain().tween_callback(func():
+			state["busy"] = false
+			refresh.call())
+
+
+## Dim interior light with a failing flicker, plus the console glow.
+func _building_lights(root: Node3D, hab: bool) -> void:
+	var l := OmniLight3D.new()
+	l.light_color = Color(0.55, 0.85, 1.0)
+	l.light_energy = 1.6
+	l.omni_range = 7.0
+	l.shadow_enabled = true
+	l.position = Vector3(-0.8, 3.0, 0.0)
+	root.add_child(l)
+	var tw := l.create_tween().set_loops()
+	tw.tween_property(l, "light_energy", 1.6, 2.6)
+	tw.tween_property(l, "light_energy", 0.15, 0.05)
+	tw.tween_property(l, "light_energy", 1.4, 0.08)
+	tw.tween_property(l, "light_energy", 0.3, 0.06)
+	tw.tween_property(l, "light_energy", 1.6, 0.1)
+	var c := OmniLight3D.new()
+	c.light_color = Color(0.35, 0.8, 1.0)
+	c.light_energy = 0.8
+	c.omni_range = 3.0
+	c.position = Vector3(0.6, 1.3, -1.4) if hab else Vector3(0.0, 1.4, -1.8)
+	root.add_child(c)
+
+
+## A flower meadow in the south-west with twisted old trees.
+func _build_meadow() -> void:
+	_scatter(["Flower_3_Group", "Flower_4_Group", "Flower_3_Single", "Flower_4_Single"], MEADOW, 0.0, 16.0, 380, 0.7, 1.4, 91)
+	_scatter(["Grass_Wispy_Short", "Grass_Common_Short", "Clover_1", "Clover_2"], MEADOW, 0.0, 18.0, 260, 0.8, 1.5, 92)
+	_scatter(["TwistedTree_1", "TwistedTree_2", "TwistedTree_3", "TwistedTree_4", "TwistedTree_5"], MEADOW, 10.0, 17.0, 7, 1.4, 2.0, 93, 260.0)
+	_scatter(["Mushroom_Laetiporus", "Mushroom_Common"], MEADOW, 6.0, 18.0, 30, 0.8, 1.4, 94)
+	var r := RandomNumberGenerator.new()
+	r.seed = 95
+	for i in 6:
+		var a := r.randf() * TAU
+		var p := MEADOW + Vector3(cos(a), 0.0, sin(a)) * r.randf_range(2.0, 12.0)
+		p.y = _ground(p)
+		Pickup.spawn(self, "resource", "fiber", p, Vector2i(2, 3))
+
+
+
+# ---------------------------------------------------------------- storage
+
+## Puts a storage crate down in front of you (called when you PLACE one
+## from the backpack). Returns false if there's no room.
+func place_crate(id: String) -> bool:
+	if not is_instance_valid(player):
+		return false
+	var fwd: Vector3 = -player.cam_yaw.global_transform.basis.z
+	fwd.y = 0.0
+	fwd = fwd.normalized() if fwd.length() > 0.01 else Vector3.FORWARD
+	var p: Vector3 = player.global_position + fwd * 1.8
+	for c in get_tree().get_nodes_in_group("storage_crate"):
+		if Vector2(c.global_position.x - p.x, c.global_position.z - p.z).length() < 1.1:
+			GS.toast("Not enough room here.")
+			return false
+	p.y = _ground(p)
+	var slots := []
+	slots.resize(int(GS.item(id).get("slots", 10)))
+	var d := {"area": "res://base.tscn", "type": id, "pos": p, "yaw": atan2(-fwd.x, -fwd.z), "items": slots}
+	GS.storage.append(d)
+	StorageCrate.spawn(self, d)
+	GS.save()
+	return true

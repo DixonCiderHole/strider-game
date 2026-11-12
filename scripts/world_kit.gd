@@ -78,8 +78,138 @@ static func ground_y(terrain, p: Vector3, fallback := 0.0) -> float:
 	return h
 
 
+## High-detail procedural trees (tools/assetgen/tree_gen.py). Same names
+## and sizes as the old kit trees, so every scene that asks for "Pine_2"
+## etc. gets these instead; plus Cherry_1..3 and FallenLog.
+const TREES_GLB := "res://models/trees.glb"
+const TREE_PREFIXES := ["Pine_", "CommonTree_", "DeadTree_", "TwistedTree_", "Cherry_", "FallenLog"]
+static var _tree_meshes := {}
+static var _tree_lods := {}     # full-detail Mesh -> [medium Mesh, far Mesh]
+
+## Distances (m) where trees switch to the medium and far versions. The far
+## version has no end distance, so every tree on the map stays visible.
+const LOD1_AT := 55.0
+const LOD2_AT := 140.0
+
+const WIND_SHADER := """
+shader_type spatial;
+render_mode depth_draw_opaque, cull_back;
+uniform sampler2D albedo_tex : source_color, filter_linear_mipmap_anisotropic;
+uniform sampler2D normal_tex : hint_normal, filter_linear_mipmap_anisotropic;
+uniform bool foliage = true;
+uniform float cutoff = 0.5;
+uniform float roughness = 0.8;
+uniform vec3 translucency : source_color = vec3(0.32, 0.36, 0.14);
+void vertex() {
+	vec3 origin = MODEL_MATRIX[3].xyz;
+	float ph = origin.x * 0.21 + origin.z * 0.17;
+	float h = max(VERTEX.y, 0.0);
+	vec2 gust = vec2(sin(TIME * 0.8 + ph), cos(TIME * 0.63 + ph * 1.7)) * (0.6 + 0.4 * sin(TIME * 0.21 + ph));
+	VERTEX.xz += gust * h * h * 0.0016;
+	if (foliage) {
+		VERTEX += NORMAL * sin(TIME * 4.5 + dot(VERTEX, vec3(3.1, 2.3, 2.7)) + ph) * 0.012 * min(h, 5.0);
+	}
+}
+void fragment() {
+	vec4 a = texture(albedo_tex, UV);
+	ALBEDO = a.rgb * COLOR.rgb;
+	if (foliage) {
+		ALPHA = a.a;
+		ALPHA_SCISSOR_THRESHOLD = cutoff;
+		BACKLIGHT = translucency * a.rgb * 2.0;
+		SPECULAR = 0.3;
+	}
+	NORMAL_MAP = texture(normal_tex, UV).rgb;
+	NORMAL_MAP_DEPTH = foliage ? 0.6 : 1.0;
+	ROUGHNESS = roughness;
+}
+"""
+
+
+static func _is_tree(model: String) -> bool:
+	for p in TREE_PREFIXES:
+		if model.begins_with(p):
+			return true
+	return false
+
+
+static func _load_trees() -> void:
+	if not _tree_meshes.is_empty() or not ResourceLoader.exists(TREES_GLB):
+		return
+	var sh := Shader.new()
+	sh.code = WIND_SHADER
+	var inst: Node = load(TREES_GLB).instantiate()
+	var swapped := {}
+	for mi in inst.find_children("*", "MeshInstance3D", true, false):
+		var mesh: Mesh = (mi as MeshInstance3D).mesh
+		for si in mesh.get_surface_count():
+			var m := mesh.surface_get_material(si) as StandardMaterial3D
+			if m == null:
+				continue
+			var nm := m.resource_name
+			if not (nm.begins_with("Foliage_") or nm.begins_with("Bark_")):
+				m.vertex_color_use_as_albedo = true
+				continue
+			if not swapped.has(nm):
+				var w := ShaderMaterial.new()
+				w.shader = sh
+				w.set_shader_parameter("albedo_tex", m.albedo_texture)
+				w.set_shader_parameter("normal_tex", m.normal_texture)
+				w.set_shader_parameter("foliage", nm.begins_with("Foliage_"))
+				w.set_shader_parameter("roughness", 0.8 if nm.begins_with("Foliage_") else 0.92)
+				if nm == "Foliage_Cherry":
+					w.set_shader_parameter("translucency", Color(0.45, 0.3, 0.32))
+				swapped[nm] = w
+			mesh.surface_set_material(si, swapped[nm])
+		_tree_meshes[String(mi.name)] = mesh
+	for key in _tree_meshes.keys():
+		if String(key).contains("_LOD"):
+			continue
+		var l1 = _tree_meshes.get(String(key) + "_LOD1")
+		var l2 = _tree_meshes.get(String(key) + "_LOD2")
+		if l1 != null and l2 != null:
+			_tree_lods[_tree_meshes[key]] = [l1, l2]
+	inst.free()
+
+
+## Visibility window [begin, end] for detail level `lv` (end 0 = no limit).
+static func _lod_window(lv: int) -> Vector2:
+	match lv:
+		0:
+			return Vector2(0.0, LOD1_AT)
+		1:
+			return Vector2(LOD1_AT, LOD2_AT)
+	return Vector2(LOD2_AT, 0.0)
+
+
+static func _apply_lod(g: GeometryInstance3D, lv: int) -> void:
+	var w := _lod_window(lv)
+	g.visibility_range_begin = w.x
+	g.visibility_range_begin_margin = 4.0 if lv > 0 else 0.0
+	g.visibility_range_end = w.y
+	g.visibility_range_end_margin = 4.0 if w.y > 0.0 else 0.0
+	if lv == 2:
+		g.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+
+
+## A single tree (or other mesh) at `xf`; trees get all three detail levels.
+static func place(parent: Node, mesh: Mesh, xf: Transform3D) -> void:
+	var levels: Array = [mesh] + (_tree_lods[mesh] as Array if _tree_lods.has(mesh) else [])
+	for lv in levels.size():
+		var mi := MeshInstance3D.new()
+		mi.mesh = levels[lv]
+		mi.transform = xf
+		if levels.size() > 1:
+			_apply_lod(mi, lv)
+		parent.add_child(mi)
+
+
 ## First mesh in a nature-kit model, or null if it isn't there.
 static func model_mesh(model: String) -> Mesh:
+	if _is_tree(model):
+		_load_trees()
+		if _tree_meshes.has(model):
+			return _tree_meshes[model]
 	var path := NATURE + model + ".gltf"
 	if not ResourceLoader.exists(path):
 		return null
@@ -108,20 +238,43 @@ static func add_instance(buckets: Dictionary, mesh: Mesh, p: Vector3, s: float, 
 	buckets[mesh].append(Transform3D(b, p))
 
 
-## One MultiMeshInstance3D per mesh in `buckets` (Mesh -> Array of Transform3D).
+## MultiMeshInstance3Ds for `buckets` (Mesh -> Array of Transform3D), split
+## into 32 m cells. Trees get a medium and a far version that take over with
+## distance (the far one is never culled).
+const PLANT_CELL := 32.0
+
 static func plant(parent: Node, buckets: Dictionary, visibility_end: float) -> void:
 	for mesh in buckets:
-		var xforms: Array = buckets[mesh]
-		var mm := MultiMesh.new()
-		mm.transform_format = MultiMesh.TRANSFORM_3D
-		mm.mesh = mesh
-		mm.instance_count = xforms.size()
-		for i in xforms.size():
-			mm.set_instance_transform(i, xforms[i])
-		var mmi := MultiMeshInstance3D.new()
-		mmi.multimesh = mm
-		mmi.visibility_range_end = visibility_end
-		parent.add_child(mmi)
+		var cells := {}
+		for x in buckets[mesh]:
+			var t: Transform3D = x
+			var key := Vector2i(floori(t.origin.x / PLANT_CELL), floori(t.origin.z / PLANT_CELL))
+			if not cells.has(key):
+				cells[key] = []
+			cells[key].append(t)
+		for key in cells:
+			var xforms: Array = cells[key]
+			var centre := Vector3((key.x + 0.5) * PLANT_CELL, 0.0, (key.y + 0.5) * PLANT_CELL)
+			var mm := MultiMesh.new()
+			mm.transform_format = MultiMesh.TRANSFORM_3D
+			mm.mesh = mesh
+			mm.instance_count = xforms.size()
+			for i in xforms.size():
+				var t: Transform3D = xforms[i]
+				mm.set_instance_transform(i, Transform3D(t.basis, t.origin - centre))
+			var levels: Array = [mesh] + (_tree_lods[mesh] as Array if _tree_lods.has(mesh) else [])
+			for lv in levels.size():
+				var lmm := mm if lv == 0 else (mm.duplicate() as MultiMesh)
+				lmm.mesh = levels[lv]
+				var mmi := MultiMeshInstance3D.new()
+				mmi.multimesh = lmm
+				mmi.position = centre
+				if levels.size() > 1:
+					_apply_lod(mmi, lv)
+				else:
+					mmi.visibility_range_end = visibility_end
+					mmi.visibility_range_end_margin = 12.0
+				parent.add_child(mmi)
 
 
 ## Trunk collider so trees block movement and bolts.
