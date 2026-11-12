@@ -240,9 +240,13 @@ func _deal_damage(amount: float, reach: float) -> void:
 	target.take_damage(amount, d.normalized())
 
 
+var max_health := 0.0   # set from health the first time it's hurt (for Executioner)
+
 func take_damage(amount: float, from_dir := Vector3.ZERO) -> void:
 	if _dead:
 		return
+	if max_health <= 0.0:
+		max_health = health
 	health -= amount
 	if health > 0.0 and _hurt_cd <= 0.0:
 		_hurt_cd = 0.35

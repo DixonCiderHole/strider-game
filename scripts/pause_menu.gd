@@ -756,48 +756,250 @@ func _refresh_map() -> void:
 
 # ---------------------------------------------------------------- SKILLS
 
+var _skills_view := "ATTRIBUTES"
+var _skills_views := {}
+var _skills_tab_btns := {}
+var _attr_box: VBoxContainer
+var _stat_box: VBoxContainer
+var _respec_btn: Button
+var _respec_armed := false
+
+const GOLD := Color(0.95, 0.75, 0.3)
+
+
 func _build_skills(page: Control) -> void:
-	var v := UI.vbox(14)
+	var v := UI.vbox(10)
 	page.add_child(v)
-	v.add_child(UI.label("SKILL TREE", 30, UI.ACCENT))
-	_skills_header = UI.label("", 20, UI.TEXT)
+	var top := HBoxContainer.new()
+	top.add_theme_constant_override("separation", 14)
+	v.add_child(top)
+	top.add_child(UI.label("CHARACTER", 30, UI.ACCENT))
+	for view in ["ATTRIBUTES", "SKILL TREES"]:
+		var b := UI.button(view, 210)
+		b.alignment = HORIZONTAL_ALIGNMENT_CENTER
+		b.toggle_mode = true
+		b.pressed.connect(_show_skills_view.bind(view))
+		top.add_child(b)
+		_skills_tab_btns[view] = b
+	var spacer := Control.new()
+	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	top.add_child(spacer)
+	_respec_btn = UI.button("RESPEC", 200)
+	_respec_btn.alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_respec_btn.tooltip_text = "Refund every skill and attribute point."
+	_respec_btn.pressed.connect(_respec)
+	top.add_child(_respec_btn)
+	_skills_header = UI.label("", 18, UI.TEXT)
 	v.add_child(_skills_header)
+
+	# Attributes + stat sheet
+	var attrs := HBoxContainer.new()
+	attrs.add_theme_constant_override("separation", 40)
+	attrs.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	v.add_child(attrs)
+	_skills_views["ATTRIBUTES"] = attrs
+	_attr_box = UI.vbox(6)
+	_attr_box.custom_minimum_size = Vector2(720, 0)
+	attrs.add_child(_attr_box)
+	var sheet_panel := PanelContainer.new()
+	sheet_panel.add_theme_stylebox_override("panel", UI.box(Color(0.04, 0.04, 0.05, 0.85), Color(0.3, 0.3, 0.35, 0.6), 1, 4))
+	sheet_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	attrs.add_child(sheet_panel)
+	var sheet_scroll := ScrollContainer.new()
+	sheet_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	sheet_panel.add_child(sheet_scroll)
+	_stat_box = UI.vbox(4)
+	_stat_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	sheet_scroll.add_child(_stat_box)
+
+	# Skill trees
+	var scroll := ScrollContainer.new()
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	v.add_child(scroll)
+	_skills_views["SKILL TREES"] = scroll
 	_skills_box = HBoxContainer.new()
-	_skills_box.add_theme_constant_override("separation", 30)
-	v.add_child(_skills_box)
+	_skills_box.add_theme_constant_override("separation", 14)
+	scroll.add_child(_skills_box)
+	_show_skills_view("ATTRIBUTES")
+
+
+func _show_skills_view(view: String) -> void:
+	_skills_view = view
+	for k in _skills_views:
+		_skills_views[k].visible = k == view
+		_skills_tab_btns[k].button_pressed = k == view
+	_refresh_skills()
 
 
 func _refresh_skills() -> void:
-	_skills_header.text = "Skill points: %d   ·   Level %d   ·   %d / %d XP   ·   Earn XP from kills, crafting, scavenging and quests." % [
-		GS.skill_points, GS.player_level, GS.xp, Items.xp_for(GS.player_level)]
+	_skills_header.text = "Level %d   ·   %d / %d XP   ·   Attribute points: %d   ·   Skill points: %d" % [
+		GS.player_level, GS.xp, Items.xp_for(GS.player_level), GS.attr_points, GS.skill_points]
+	_respec_btn.text = "CONFIRM RESPEC?" if _respec_armed else "RESPEC"
+	if _skills_view == "ATTRIBUTES":
+		_refresh_attributes()
+	else:
+		_refresh_trees()
+
+
+func _refresh_attributes() -> void:
+	for c in _attr_box.get_children():
+		c.queue_free()
+	_attr_box.add_child(UI.label("ATTRIBUTES   ·   +%d points every level" % Items.ATTR_PER_LEVEL, 20, UI.ACCENT))
+	for a in Items.ATTRIBUTES:
+		var id: String = a["id"]
+		var spent := int(GS.attributes.get(id, 0))
+		var total := GS.attr(id)
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 12)
+		_attr_box.add_child(row)
+		var name_col := UI.vbox(0)
+		name_col.custom_minimum_size = Vector2(300, 0)
+		row.add_child(name_col)
+		name_col.add_child(UI.label(String(a["name"]).to_upper(), 19, GOLD if total > 0 else UI.TEXT))
+		var per := UI.label("Per point: " + String(a["per"]), 13, UI.MUTED)
+		per.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		per.custom_minimum_size = Vector2(300, 0)
+		name_col.add_child(per)
+		var bar_col := UI.vbox(2)
+		bar_col.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		row.add_child(bar_col)
+		var bar := ProgressBar.new()
+		bar.custom_minimum_size = Vector2(250, 14)
+		bar.max_value = Items.ATTR_CAP
+		bar.value = spent
+		bar.show_percentage = false
+		bar.add_theme_stylebox_override("background", UI.box(Color(0.08, 0.08, 0.1), Color(0.3, 0.3, 0.35), 1, 2))
+		bar.add_theme_stylebox_override("fill", UI.box(Color(0.8, 0.2, 0.12), Color(0.95, 0.4, 0.2), 1, 2))
+		bar_col.add_child(bar)
+		var bonus := total - spent
+		bar_col.add_child(UI.label("%d / %d%s" % [spent, Items.ATTR_CAP, ("   (+%d from skills)" % bonus) if bonus > 0 else ""], 14, UI.MUTED))
+		var plus := UI.button("+", 56)
+		plus.alignment = HORIZONTAL_ALIGNMENT_CENTER
+		plus.custom_minimum_size.y = 44
+		plus.add_theme_font_size_override("font_size", 24)
+		plus.disabled = not GS.can_raise(id)
+		plus.pressed.connect(_raise.bind(id))
+		row.add_child(plus)
+	_refresh_stat_sheet()
+
+
+func _stat_line(label: String, value: String) -> void:
+	var row := HBoxContainer.new()
+	var l := UI.label(label, 16, UI.MUTED)
+	l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(l)
+	row.add_child(UI.label(value, 16, UI.TEXT))
+	_stat_box.add_child(row)
+
+
+func _refresh_stat_sheet() -> void:
+	for c in _stat_box.get_children():
+		c.queue_free()
+	var w := GS.item(GS.equipment.get("primary", ""))
+	var rate := float(w.get("rate", 0.16))
+	var dmg := GS.player_damage() * float(w.get("damage", 1.0))
+	var pct := func(x: float) -> String: return "%.1f%%" % (x * 100.0)
+	_stat_box.add_child(UI.label("OFFENSE", 18, UI.ACCENT))
+	_stat_line("Damage per bolt (%s)" % w.get("name", "rifle"), "%.1f" % dmg)
+	_stat_line("Critical chance", pct.call(GS.crit_chance()))
+	_stat_line("Critical damage", "x%.2f" % GS.crit_mult())
+	_stat_line("Fire rate", "%.1f shots/s" % (GS.fire_rate_mult() / rate))
+	_stat_line("Reload time", "%.2f s" % (1.4 * GS.reload_time_mult()))
+	_stat_line("Magazine", "%d" % GS.mag_size())
+	_stat_line("Grenade damage", "x%.2f   (+%.2f m radius)" % [GS.grenade_mult(), GS.grenade_radius_bonus()])
+	_stat_line("Execute bonus (<30% health)", "+40%" if GS.rank("executioner") > 0 else "—")
+	_stat_box.add_child(UI.label("DEFENSE", 18, UI.ACCENT))
+	_stat_line("Max health", "%d" % int(GS.player_max_health()))
+	_stat_line("Damage reduction", pct.call(1.0 - GS.damage_taken_mult()))
+	_stat_line("Evade chance", pct.call(GS.evade_chance()))
+	_stat_line("Block chance", "%s   (absorbs %d%%)" % [pct.call(GS.block_chance()), int(GS.BLOCK_ABSORB * 100)])
+	_stat_line("Health regeneration", "%.2f /s after 5 s" % GS.regen_rate())
+	_stat_line("Healing items", "+50%" if GS.rank("field_medic") > 0 else "normal")
+	_stat_line("Last Stand", "ready every 2 min" if GS.rank("last_stand") > 0 else "—")
+	_stat_box.add_child(UI.label("SQUAD", 18, UI.ACCENT))
+	_stat_line("Droid damage per bolt", "%.1f" % GS.droid_damage())
+	_stat_line("Ally damage", "x%.2f" % GS.ally_damage_mult())
+	_stat_line("Health per kill", "%d" % (6 * GS.rank("adrenaline")))
+	_stat_box.add_child(UI.label("SURVIVAL", 18, UI.ACCENT))
+	_stat_line("Experience gain", "x%.2f" % GS.xp_mult())
+	_stat_line("Salvage gain", "x%.2f" % GS.salvage_mult())
+	_stat_line("Extra resources per pickup", "+%d" % GS.rank("scavenger"))
+	_stat_line("Module strength", "x%.2f" % (1.0 + 0.25 * GS.rank("overclock")))
+
+
+func _refresh_trees() -> void:
 	for c in _skills_box.get_children():
 		c.queue_free()
 	for br in Items.BRANCHES:
-		var col := UI.vbox(10)
-		col.custom_minimum_size = Vector2(330, 0)
+		var col := UI.vbox(6)
+		col.custom_minimum_size = Vector2(286, 0)
 		_skills_box.add_child(col)
 		col.add_child(UI.label(br, 22, UI.ACCENT))
-		for sk in Items.SKILLS:
-			if sk["branch"] != br:
-				continue
-			var r := GS.rank(sk["id"])
-			var b := UI.button("%s   %d/%d" % [sk["name"], r, sk["ranks"]], 330)
-			b.custom_minimum_size.y = 46
-			b.add_theme_font_size_override("font_size", 18)
-			b.disabled = not GS.can_learn(sk["id"])
-			if r > 0:
-				b.add_theme_stylebox_override("disabled", UI.box(Color(0.2, 0.12, 0.05, 0.9), Color(0.95, 0.75, 0.3), 2, 4))
-			b.pressed.connect(_learn.bind(sk["id"]))
-			col.add_child(b)
-			var req: String = sk.get("req", "")
-			var d := UI.label(sk["desc"] + ("   (needs %s)" % GS.skill_def(req)["name"] if req != "" else ""), 14, UI.MUTED)
-			d.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-			d.custom_minimum_size = Vector2(330, 0)
-			col.add_child(d)
+		var blurb := UI.label("%s\n%d points spent" % [Items.BRANCH_BLURB[br], GS.branch_points(br)], 13, UI.MUTED)
+		blurb.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		blurb.custom_minimum_size = Vector2(286, 0)
+		col.add_child(blurb)
+		for tier in Items.TIERS.size():
+			var req: Array = Items.TIERS[tier]
+			var open := GS.tier_open(br, tier)
+			var head := "TIER %s" % ["I", "II", "III", "IV"][tier]
+			if tier > 0:
+				head += "   ·   Lv %d, %d pts" % [int(req[0]), int(req[1])]
+			col.add_child(UI.label(head + ("" if open else "   (locked)"), 14, GOLD if open else Color(0.45, 0.45, 0.5)))
+			for sk in Items.SKILLS:
+				if sk["branch"] != br or int(sk.get("tier", 0)) != tier:
+					continue
+				col.add_child(_skill_tile(sk, open))
+
+
+func _skill_tile(sk: Dictionary, open: bool) -> Control:
+	var r := GS.rank(sk["id"])
+	var maxed := r >= int(sk["ranks"])
+	var b := Button.new()
+	b.focus_mode = Control.FOCUS_NONE
+	b.custom_minimum_size = Vector2(286, 0)
+	b.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	b.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	b.text = "%s   %d/%d\n%s" % [sk["name"], r, int(sk["ranks"]), sk["desc"]]
+	b.add_theme_font_size_override("font_size", 14)
+	var bg := Color(0.07, 0.07, 0.09, 0.95)
+	var border := Color(0.25, 0.25, 0.3)
+	if r > 0:
+		bg = Color(0.2, 0.12, 0.05, 0.95)
+		border = GOLD
+	elif GS.can_learn(sk["id"]):
+		border = UI.ACCENT
+	b.add_theme_stylebox_override("normal", UI.box(bg, border, 2, 4))
+	b.add_theme_stylebox_override("hover", UI.box(bg.lightened(0.08), UI.ACCENT if not maxed else GOLD, 2, 4))
+	b.add_theme_stylebox_override("pressed", UI.box(bg.lightened(0.12), GOLD, 2, 4))
+	b.add_theme_stylebox_override("disabled", UI.box(bg, border, 2, 4))
+	b.add_theme_color_override("font_color", UI.TEXT if open else Color(0.5, 0.5, 0.55))
+	b.add_theme_color_override("font_disabled_color", (GOLD if r > 0 else (UI.TEXT if open else Color(0.45, 0.45, 0.5))))
+	b.disabled = not GS.can_learn(sk["id"])
+	b.pressed.connect(_learn.bind(sk["id"]))
+	return b
+
+
+func _raise(id: String) -> void:
+	GS.raise_attr(id)
+	_respec_armed = false
+	_refresh_skills()
 
 
 func _learn(id: String) -> void:
 	GS.learn(id)
+	_respec_armed = false
+	_refresh_skills()
+
+
+func _respec() -> void:
+	if not _respec_armed:
+		_respec_armed = true
+		_refresh_skills()
+		return
+	_respec_armed = false
+	GS.respec()
 	_refresh_skills()
 
 

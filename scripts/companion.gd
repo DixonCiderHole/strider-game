@@ -71,6 +71,11 @@ func _ready() -> void:
 	else:
 		add_to_group("companion")
 		add_to_group("party_member")
+		var talk = load("res://scripts/talk_point.gd").new()
+		talk.name = "Talk"
+		talk.who = "droid"
+		talk.member = self
+		add_child(talk)
 	var cs := CollisionShape3D.new()
 	var cap := CapsuleShape3D.new()
 	cap.radius = 0.55

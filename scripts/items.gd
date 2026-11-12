@@ -83,25 +83,70 @@ const BENCH_LEVELS := {
 }
 
 ## Skill tree. One point per player level. ranks = how many times it can be taken.
-const SKILLS := [
-	# Combat
-	{"id": "steady_aim", "branch": "COMBAT", "name": "Steady Aim", "ranks": 3, "desc": "+10% weapon damage per rank."},
-	{"id": "quick_hands", "branch": "COMBAT", "name": "Quick Hands", "ranks": 1, "req": "steady_aim", "desc": "Reload 40% faster."},
-	{"id": "extended_mag", "branch": "COMBAT", "name": "Extended Cells", "ranks": 2, "req": "quick_hands", "desc": "+5 shots per magazine per rank."},
-	# Survival
-	{"id": "tough", "branch": "SURVIVAL", "name": "Tough", "ranks": 3, "desc": "+15 max health per rank."},
-	{"id": "field_medic", "branch": "SURVIVAL", "name": "Field Medic", "ranks": 1, "req": "tough", "desc": "Healing items restore 50% more."},
-	{"id": "field_chem", "branch": "SURVIVAL", "name": "Field Chemistry", "ranks": 1, "req": "field_medic", "desc": "Unlocks the Medical Stim recipe."},
-	# Crafting
-	{"id": "tinkerer", "branch": "CRAFTING", "name": "Tinkerer", "ranks": 1, "desc": "Bench crafting gives double XP."},
-	{"id": "efficient", "branch": "CRAFTING", "name": "Efficient Crafting", "ranks": 2, "req": "tinkerer", "desc": "15% chance per rank to craft a bonus item."},
-	{"id": "modding", "branch": "CRAFTING", "name": "Modding", "ranks": 1, "req": "tinkerer", "desc": "Unlocks Targeting, Servo and Capacitor modules."},
-	# Scavenging
-	{"id": "scavenger", "branch": "SCAVENGING", "name": "Scavenger", "ranks": 2, "desc": "+1 resource from every pickup per rank."},
-	{"id": "lucky", "branch": "SCAVENGING", "name": "Lucky Find", "ranks": 1, "req": "scavenger", "desc": "Crates contain an extra item."},
-	{"id": "lumberjack", "branch": "SCAVENGING", "name": "Lumberjack", "ranks": 1, "req": "scavenger", "desc": "Chopping and mining give double."},
+## Attributes: +2 points every level, spent freely (SWTOR-style stats).
+## "per" is what one point gives; stat sheet maths is in game_state.gd.
+const ATTRIBUTES := [
+	{"id": "mastery", "name": "Mastery", "per": "+1.5% weapon damage", "icon": "◆"},
+	{"id": "endurance", "name": "Endurance", "per": "+10 max health, +0.15 health/s regeneration", "icon": "♥"},
+	{"id": "power", "name": "Power", "per": "+1% weapon damage, +4% grenade damage", "icon": "✦"},
+	{"id": "critical", "name": "Critical", "per": "+1% critical chance, +2% critical damage", "icon": "✸"},
+	{"id": "alacrity", "name": "Alacrity", "per": "+2% fire rate, +3% reload speed", "icon": "➤"},
+	{"id": "defense", "name": "Defense", "per": "+0.8% chance to evade an attack", "icon": "◇"},
+	{"id": "shield", "name": "Shield", "per": "+1% chance to block (blocked hits deal 40% less)", "icon": "⬡"},
+	{"id": "presence", "name": "Presence", "per": "+4% droid and ally damage", "icon": "✚"},
 ]
-const BRANCHES := ["COMBAT", "SURVIVAL", "CRAFTING", "SCAVENGING"]
+const ATTR_CAP := 25
+const ATTR_PER_LEVEL := 2
+
+## Skill trees (disciplines). Each tier opens at a player level and once
+## enough points are spent in that tree: [level, points in tree].
+const TIERS := [[1, 0], [4, 3], [8, 6], [12, 9]]
+const BRANCHES := ["MARKSMAN", "VANGUARD", "ENGINEER", "COMMAND", "SCAVENGER"]
+const BRANCH_BLURB := {
+	"MARKSMAN": "Blaster mastery: damage, criticals and rate of fire.",
+	"VANGUARD": "Staying alive: health, armour, evasion and recovery.",
+	"ENGINEER": "Tech and crafting: grenades, modules and the bench.",
+	"COMMAND": "Leading the squad: the droid and your allies.",
+	"SCAVENGER": "Living off the land: salvage, loot and experience.",
+}
+const SKILLS := [
+	# Marksman
+	{"id": "steady_aim", "branch": "MARKSMAN", "tier": 0, "name": "Steady Aim", "ranks": 3, "desc": "+10% weapon damage per rank."},
+	{"id": "quick_hands", "branch": "MARKSMAN", "tier": 0, "name": "Quick Hands", "ranks": 1, "desc": "Reload 40% faster."},
+	{"id": "extended_mag", "branch": "MARKSMAN", "tier": 1, "name": "Extended Cells", "ranks": 2, "desc": "+5 shots per magazine per rank."},
+	{"id": "deadeye", "branch": "MARKSMAN", "tier": 1, "name": "Deadeye", "ranks": 3, "desc": "+3% critical chance per rank."},
+	{"id": "rapid_fire", "branch": "MARKSMAN", "tier": 2, "name": "Rapid Fire", "ranks": 2, "desc": "+8% fire rate per rank."},
+	{"id": "overcharged_bolts", "branch": "MARKSMAN", "tier": 2, "name": "Overcharged Bolts", "ranks": 2, "desc": "Critical hits deal +20% damage per rank."},
+	{"id": "executioner", "branch": "MARKSMAN", "tier": 3, "name": "Executioner", "ranks": 1, "desc": "+40% damage to creatures below 30% health."},
+	# Vanguard
+	{"id": "tough", "branch": "VANGUARD", "tier": 0, "name": "Tough", "ranks": 3, "desc": "+15 max health per rank."},
+	{"id": "field_medic", "branch": "VANGUARD", "tier": 0, "name": "Field Medic", "ranks": 1, "desc": "Healing items restore 50% more."},
+	{"id": "field_chem", "branch": "VANGUARD", "tier": 1, "name": "Field Chemistry", "ranks": 1, "desc": "Unlocks the Medical Stim recipe."},
+	{"id": "thick_skin", "branch": "VANGUARD", "tier": 1, "name": "Thick Skin", "ranks": 3, "desc": "Take 5% less damage per rank."},
+	{"id": "second_wind", "branch": "VANGUARD", "tier": 2, "name": "Second Wind", "ranks": 2, "desc": "Regenerate 1.5 health/s per rank after 5 s without being hit."},
+	{"id": "evasive", "branch": "VANGUARD", "tier": 2, "name": "Evasive", "ranks": 2, "desc": "+4% chance to evade an attack per rank."},
+	{"id": "last_stand", "branch": "VANGUARD", "tier": 3, "name": "Last Stand", "ranks": 1, "desc": "A killing blow leaves you at 1 health and invulnerable for 3 s instead. Once every 2 minutes."},
+	# Engineer
+	{"id": "tinkerer", "branch": "ENGINEER", "tier": 0, "name": "Tinkerer", "ranks": 1, "desc": "Bench crafting gives double XP."},
+	{"id": "demolitions", "branch": "ENGINEER", "tier": 0, "name": "Demolitions", "ranks": 2, "desc": "+25% grenade damage and +0.75 m blast radius per rank."},
+	{"id": "efficient", "branch": "ENGINEER", "tier": 1, "name": "Efficient Crafting", "ranks": 2, "desc": "15% chance per rank to craft a bonus item."},
+	{"id": "modding", "branch": "ENGINEER", "tier": 1, "name": "Modding", "ranks": 1, "desc": "Unlocks Targeting, Servo and Capacitor modules."},
+	{"id": "overclock", "branch": "ENGINEER", "tier": 2, "name": "Overclock", "ranks": 2, "desc": "Equipped module bonuses +25% per rank."},
+	{"id": "master_crafter", "branch": "ENGINEER", "tier": 3, "name": "Master Crafter", "ranks": 1, "desc": "Crafting ammo, grenades and medical supplies makes one extra."},
+	# Command
+	{"id": "droid_link", "branch": "COMMAND", "tier": 0, "name": "Droid Link", "ranks": 3, "desc": "+10% droid damage per rank."},
+	{"id": "squad_leader", "branch": "COMMAND", "tier": 0, "name": "Squad Leader", "ranks": 2, "desc": "+12% ally damage per rank."},
+	{"id": "adrenaline", "branch": "COMMAND", "tier": 1, "name": "Adrenaline", "ranks": 2, "desc": "Each kill restores 6 health per rank."},
+	{"id": "commander", "branch": "COMMAND", "tier": 2, "name": "Commanding Presence", "ranks": 2, "desc": "+5 Presence per rank."},
+	{"id": "coordinated_fire", "branch": "COMMAND", "tier": 3, "name": "Coordinated Fire", "ranks": 1, "desc": "Droid and allies deal +25% damage."},
+	# Scavenger
+	{"id": "scavenger", "branch": "SCAVENGER", "tier": 0, "name": "Scavenger", "ranks": 2, "desc": "+1 resource from every pickup per rank."},
+	{"id": "lumberjack", "branch": "SCAVENGER", "tier": 0, "name": "Lumberjack", "ranks": 1, "desc": "Chopping and mining give double."},
+	{"id": "lucky", "branch": "SCAVENGER", "tier": 1, "name": "Lucky Find", "ranks": 1, "desc": "Crates contain an extra item."},
+	{"id": "salvager", "branch": "SCAVENGER", "tier": 1, "name": "Salvager", "ranks": 2, "desc": "+20% salvage per rank."},
+	{"id": "quick_study", "branch": "SCAVENGER", "tier": 2, "name": "Quick Study", "ranks": 2, "desc": "+10% experience per rank."},
+	{"id": "fortune", "branch": "SCAVENGER", "tier": 3, "name": "Fortune", "ranks": 1, "desc": "Crates have a 25% chance to hold an enhancement module."},
+]
 
 ## Quest chain started at the camp. Objectives are checked by GameState.
 const QUESTS := [

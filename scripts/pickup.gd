@@ -108,6 +108,9 @@ func _open_crate() -> void:
 	if GS.rank("lucky") > 0 or got == 0:
 		var row = Items.CRATE_LOOT[randi() % Items.CRATE_LOOT.size()]
 		GS.add_item(row[0], row[1])
+	if GS.rank("fortune") > 0 and randf() < 0.25:
+		var mods := ["mod_plating", "mod_targeting", "mod_servo", "mod_capacitor"]
+		GS.add_item(mods[randi() % mods.size()], 1)
 	GS.add_xp(3)
 	if _lid != null:
 		var tw := create_tween()

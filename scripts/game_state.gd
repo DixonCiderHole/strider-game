@@ -79,6 +79,9 @@ static var player_level := 1
 static var xp := 0
 static var skill_points := 0
 static var skills := {}           # skill id -> rank
+static var attr_points := 0
+static var attributes := {}       # attribute id -> points spent
+static var _last_stand_at := -1000.0
 static var bench_level := 0
 static var quest_stage := 0
 static var flags := {}            # crafted:<id>, chopped, spent_point, equipped_module, talk
@@ -114,6 +117,9 @@ static func ensure_loaded() -> void:
 	xp = cf.get_value("rpg", "xp", 0)
 	skill_points = cf.get_value("rpg", "skill_points", 0)
 	skills = cf.get_value("rpg", "skills", {})
+	attributes = cf.get_value("rpg", "attributes", {})
+	# Saves from before attributes existed get the points they'd have earned.
+	attr_points = cf.get_value("rpg", "attr_points", Items.ATTR_PER_LEVEL * maxi(0, player_level - 1))
 	bench_level = cf.get_value("rpg", "bench_level", 0)
 	quest_stage = cf.get_value("rpg", "quest_stage", 0)
 	flags = cf.get_value("rpg", "flags", {})
@@ -157,6 +163,8 @@ static func _clear() -> void:
 	xp = 0
 	skill_points = 0
 	skills = {}
+	attr_points = 0
+	attributes = {}
 	bench_level = 0
 	quest_stage = 0
 	flags = {}
@@ -181,6 +189,8 @@ static func save() -> void:
 	cf.set_value("rpg", "xp", xp)
 	cf.set_value("rpg", "skill_points", skill_points)
 	cf.set_value("rpg", "skills", skills)
+	cf.set_value("rpg", "attributes", attributes)
+	cf.set_value("rpg", "attr_points", attr_points)
 	cf.set_value("rpg", "bench_level", bench_level)
 	cf.set_value("rpg", "quest_stage", quest_stage)
 	cf.set_value("rpg", "flags", flags)
@@ -217,7 +227,7 @@ static func upgrade(track: String) -> bool:
 
 static func add_salvage(amount: int) -> void:
 	ensure_loaded()
-	salvage += amount
+	salvage += int(round(amount * salvage_mult()))
 	save()
 
 
@@ -234,15 +244,87 @@ static func stat_at(track: String, lvl: int) -> float:
 
 
 static func player_damage() -> float:
-	return stat_at("blaster", level("blaster")) * (1.0 + 0.1 * rank("steady_aim") + module_bonus("damage"))
+	return stat_at("blaster", level("blaster")) * (1.0 + 0.1 * rank("steady_aim") + 0.015 * attr("mastery")
+		+ 0.01 * attr("power") + module_bonus("damage"))
 
 
 static func player_max_health() -> float:
-	return stat_at("armor", level("armor")) + 15.0 * rank("tough") + module_bonus("health")
+	return stat_at("armor", level("armor")) + 15.0 * rank("tough") + 10.0 * attr("endurance") + module_bonus("health")
 
 
 static func droid_damage() -> float:
-	return stat_at("droid", level("droid"))
+	return stat_at("droid", level("droid")) * (1.0 + 0.1 * rank("droid_link") + 0.04 * attr("presence")
+		+ 0.25 * rank("coordinated_fire"))
+
+
+## Allies' outgoing damage multiplier.
+static func ally_damage_mult() -> float:
+	return 1.0 + 0.12 * rank("squad_leader") + 0.04 * attr("presence") + 0.25 * rank("coordinated_fire")
+
+
+# ---------------------------------------------------------------- combat stats
+
+static func crit_chance() -> float:
+	return minf(0.05 + 0.01 * attr("critical") + 0.03 * rank("deadeye"), 0.75)
+
+
+static func crit_mult() -> float:
+	return 1.5 + 0.02 * attr("critical") + 0.2 * rank("overcharged_bolts")
+
+
+static func fire_rate_mult() -> float:
+	return 1.0 + 0.02 * attr("alacrity") + 0.08 * rank("rapid_fire")
+
+
+static func reload_time_mult() -> float:
+	return (0.6 if rank("quick_hands") > 0 else 1.0) / (1.0 + 0.03 * attr("alacrity"))
+
+
+static func evade_chance() -> float:
+	return minf(0.008 * attr("defense") + 0.04 * rank("evasive"), 0.35)
+
+
+static func block_chance() -> float:
+	return minf(0.01 * attr("shield"), 0.3)
+
+
+const BLOCK_ABSORB := 0.4
+
+
+static func damage_taken_mult() -> float:
+	return 1.0 - 0.05 * rank("thick_skin")
+
+
+## Health/s regenerated once you've gone 5 s without being hit.
+static func regen_rate() -> float:
+	return 0.15 * attr("endurance") + 1.5 * rank("second_wind")
+
+
+static func grenade_mult() -> float:
+	return 1.0 + 0.04 * attr("power") + 0.25 * rank("demolitions")
+
+
+static func grenade_radius_bonus() -> float:
+	return 0.75 * rank("demolitions")
+
+
+static func xp_mult() -> float:
+	return 1.0 + 0.1 * rank("quick_study")
+
+
+static func salvage_mult() -> float:
+	return 1.0 + 0.2 * rank("salvager")
+
+
+## Last Stand: true (and starts the 2 minute cooldown) if it can save you now.
+static func try_last_stand() -> bool:
+	if rank("last_stand") <= 0:
+		return false
+	var now := Time.get_ticks_msec() / 1000.0
+	if now - _last_stand_at < 120.0:
+		return false
+	_last_stand_at = now
+	return true
 
 
 
@@ -389,7 +471,7 @@ static func module_bonus(key: String) -> float:
 		var id: String = equipment.get(k, "")
 		if id != "":
 			total += float(item(id).get("bonus", {}).get(key, 0.0))
-	return total
+	return total * (1.0 + 0.25 * rank("overclock"))
 
 
 static func mag_size() -> int:
@@ -404,12 +486,13 @@ static func heal_amount(id: String) -> float:
 
 static func add_xp(n: int) -> void:
 	ensure_loaded()
-	xp += n
+	xp += int(round(n * xp_mult()))
 	while xp >= Items.xp_for(player_level):
 		xp -= Items.xp_for(player_level)
 		player_level += 1
 		skill_points += 1
-		toast("LEVEL UP!  Level %d  ·  +1 skill point" % player_level)
+		attr_points += Items.ATTR_PER_LEVEL
+		toast("LEVEL UP!  Level %d  ·  +1 skill point  ·  +%d attribute points" % [player_level, Items.ATTR_PER_LEVEL])
 	# Allies following you learn alongside you.
 	var tree := Engine.get_main_loop() as SceneTree
 	if tree != null:
@@ -446,8 +529,70 @@ static func can_learn(id: String) -> bool:
 	var d := skill_def(id)
 	if d.is_empty() or skill_points <= 0 or rank(id) >= int(d["ranks"]):
 		return false
-	var req: String = d.get("req", "")
-	return req == "" or rank(req) > 0
+	return tier_open(String(d["branch"]), int(d.get("tier", 0)))
+
+
+## How far the two survivors trust each other (drives banter):
+## 0 wary, 1 grudging respect, 2 trust (after the beacon). Story scripts can
+## force a stage with flags["trust"].
+static func trust_stage() -> int:
+	ensure_loaded()
+	if flags.has("trust"):
+		return int(flags["trust"])
+	if flags.get("beacon_wrecked", false):
+		return 2
+	if quest_stage >= 6 or player_level >= 6:
+		return 1
+	return 0
+
+
+## Points spent in one skill tree.
+static func branch_points(branch: String) -> int:
+	var n := 0
+	for s in Items.SKILLS:
+		if s["branch"] == branch:
+			n += rank(s["id"])
+	return n
+
+
+static func tier_open(branch: String, tier: int) -> bool:
+	var req: Array = Items.TIERS[tier]
+	return player_level >= int(req[0]) and branch_points(branch) >= int(req[1])
+
+
+## Attribute total: points spent plus skill bonuses.
+static func attr(id: String) -> int:
+	ensure_loaded()
+	var v := int(attributes.get(id, 0))
+	if id == "presence":
+		v += 5 * rank("commander")
+	return v
+
+
+static func can_raise(id: String) -> bool:
+	return attr_points > 0 and int(attributes.get(id, 0)) < Items.ATTR_CAP
+
+
+static func raise_attr(id: String) -> bool:
+	if not can_raise(id):
+		return false
+	attributes[id] = int(attributes.get(id, 0)) + 1
+	attr_points -= 1
+	flags["spent_point"] = true
+	changed()
+	return true
+
+
+## Refunds every skill and attribute point so they can be spent again.
+static func respec() -> void:
+	for id in skills:
+		skill_points += int(skills[id])
+	for id in attributes:
+		attr_points += int(attributes[id])
+	skills = {}
+	attributes = {}
+	changed()
+	save()
 
 
 static func learn(id: String) -> bool:
@@ -474,6 +619,8 @@ static func craft(r: Dictionary) -> bool:
 		return false
 	var n: int = r["count"]
 	if randf() < 0.15 * rank("efficient"):
+		n += 1
+	if rank("master_crafter") > 0 and item(r["out"]).get("type", "") in ["consumable", "ammo", "utility"]:
 		n += 1
 	add_item(r["out"], n)
 	flags["crafted:" + String(r["id"])] = true

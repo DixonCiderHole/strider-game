@@ -1342,38 +1342,60 @@ func _build_resources() -> void:
 func _build_pod_wreck() -> void:
 	var c := POD_POS
 	c.y = _ground(c)
-	var hull := U.mat(Color(0.2, 0.21, 0.23), 0.5)
-	hull.metallic = 0.6
-	var pod := MeshInstance3D.new()
-	var cap := CapsuleMesh.new()
-	cap.radius = 1.3
-	cap.height = 4.5
-	pod.mesh = cap
-	pod.material_override = hull
-	pod.position = c + Vector3(0.0, 0.7, 0.0)
-	pod.rotation = Vector3(deg_to_rad(80.0), deg_to_rad(30.0), deg_to_rad(10.0))
-	add_child(pod)
-	var body := StaticBody3D.new()
-	var cs := CollisionShape3D.new()
-	var shape := CapsuleShape3D.new()
-	shape.radius = 1.3
-	shape.height = 4.5
-	cs.shape = shape
-	body.add_child(cs)
-	body.transform = pod.transform
-	add_child(body)
-	var smoke := OmniLight3D.new()
-	smoke.light_color = Color(1.0, 0.5, 0.2)
-	smoke.light_energy = 1.5
-	smoke.omni_range = 5.0
-	smoke.position = c + Vector3(0.0, 1.5, 0.0)
-	add_child(smoke)
+	var root := Node3D.new()
+	root.name = "EscapePod"
+	root.position = c - Vector3(0.0, 0.15, 0.0)
+	root.rotation.y = deg_to_rad(30.0)
+	add_child(root)
+	if ResourceLoader.exists("res://models/escape_pod.glb"):
+		var pod: Node3D = load("res://models/escape_pod.glb").instantiate()
+		root.add_child(pod)
+		var hull := pod.find_child("Pod", true, false) as MeshInstance3D
+		if hull != null:
+			var body := StaticBody3D.new()
+			var cs := CollisionShape3D.new()
+			var shape := hull.mesh.create_trimesh_shape()
+			shape.backface_collision = true
+			cs.shape = shape
+			body.add_child(cs)
+			hull.add_child(body)
+		var lamp := pod.find_child("Beacon", true, false) as GeometryInstance3D
+		if lamp != null:
+			var tw := lamp.create_tween().set_loops()
+			tw.tween_callback(func(): lamp.visible = true)
+			tw.tween_interval(0.25)
+			tw.tween_callback(func(): lamp.visible = false)
+			tw.tween_interval(1.1)
+	# Red emergency strobe, the heat shield's ember glow and its smoke.
+	var strobe := OmniLight3D.new()
+	strobe.light_color = Color(1.0, 0.15, 0.08)
+	strobe.omni_range = 6.0
+	strobe.position = Vector3(-0.4, 2.1, 1.3)
+	root.add_child(strobe)
+	var stw := strobe.create_tween().set_loops()
+	stw.tween_property(strobe, "light_energy", 2.5, 0.05)
+	stw.tween_interval(0.2)
+	stw.tween_property(strobe, "light_energy", 0.0, 0.1)
+	stw.tween_interval(1.0)
+	var ember := OmniLight3D.new()
+	ember.light_color = Color(1.0, 0.45, 0.15)
+	ember.light_energy = 1.4
+	ember.omni_range = 4.5
+	ember.position = Vector3(0.0, 0.9, -3.0)
+	root.add_child(ember)
+	var smoke_colors := Gradient.new()
+	smoke_colors.set_color(0, Color(0.25, 0.24, 0.23, 0.0))
+	smoke_colors.set_color(1, Color(0.3, 0.3, 0.3, 0.0))
+	smoke_colors.add_point(0.2, Color(0.22, 0.21, 0.2, 0.45))
+	var smoke := _particles(18, 5.0, smoke_colors, 1.4, 1.1, 0.5, false)
+	smoke.position = Vector3(0.0, 1.0, -2.6)
+	root.add_child(smoke)
 	var r := RandomNumberGenerator.new()
 	r.seed = 3
 	for k in 5:
 		var id := "scrap" if k < 3 else "plastic"
 		var a := r.randf() * TAU
-		var p := c + Vector3(cos(a), 0.0, sin(a)) * r.randf_range(2.5, 5.0)
+		var p := c + Vector3(cos(a), 0.0, sin(a)) * r.randf_range(3.6, 6.0)
 		p.y = _ground(p)
 		Pickup.spawn(self, "resource", id, p, Vector2i(1, 3))
 	for k in 3:
@@ -1497,42 +1519,138 @@ func _scatter(names: Array, center: Vector3, r0: float, r1: float, count: int, s
 
 
 ## A still lake in the east of the valley, with reeds and a small jetty.
-func _build_lake() -> void:
-	var water := MeshInstance3D.new()
-	var disc := CylinderMesh.new()
-	disc.top_radius = LAKE_R + 7.0
-	disc.bottom_radius = LAKE_R + 7.0
-	disc.height = 0.04
-	disc.radial_segments = 64
-	water.mesh = disc
-	var sh := Shader.new()
-	sh.code = """
+## Lake surface: refraction of the lake bed through depth-tinted water
+## (red light absorbed first), two scrolling ripple normal maps, sky
+## reflection via the fresnel term, foam where the water gets shallow
+## (shore, rocks, dock posts) and slow swell in the vertices.
+const WATER_SHADER := """
 shader_type spatial;
-render_mode blend_mix, depth_draw_opaque, cull_back, specular_schlick_ggx;
-uniform vec3 deep : source_color = vec3(0.03, 0.14, 0.18);
-uniform vec3 shallow : source_color = vec3(0.14, 0.36, 0.40);
-void fragment() {
-	vec2 w = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xz;
+render_mode blend_mix, depth_draw_always, cull_back, diffuse_burley, specular_schlick_ggx;
+uniform sampler2D screen_tex : hint_screen_texture, filter_linear_mipmap;
+uniform sampler2D depth_tex : hint_depth_texture, filter_nearest;
+uniform sampler2D normal_a : hint_normal, filter_linear_mipmap, repeat_enable;
+uniform sampler2D normal_b : hint_normal, filter_linear_mipmap, repeat_enable;
+uniform sampler2D foam_tex : filter_linear_mipmap, repeat_enable;
+uniform vec3 shallow_col : source_color = vec3(0.11, 0.34, 0.32);
+uniform vec3 deep_col : source_color = vec3(0.015, 0.07, 0.09);
+uniform vec3 absorb = vec3(1.1, 0.42, 0.3);
+uniform float radius = 25.0;
+uniform float refract_strength = 0.04;
+varying vec3 wpos;
+
+void vertex() {
+	wpos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
 	float t = TIME;
-	vec3 n = normalize(vec3(
-		sin(w.x * 1.3 + t * 1.1) * 0.07 + sin((w.x + w.y) * 2.7 + t * 1.6) * 0.035,
-		1.0,
-		cos(w.y * 1.6 + t * 0.9) * 0.07 + cos((w.x - w.y) * 2.3 - t * 1.3) * 0.035));
-	NORMAL = normalize((VIEW_MATRIX * vec4(n, 0.0)).xyz);
-	float fres = pow(1.0 - clamp(dot(NORMAL, VIEW), 0.0, 1.0), 3.0);
-	ALBEDO = mix(deep, shallow, 0.3 + 0.2 * fres);
-	ROUGHNESS = 0.05;
-	METALLIC = 0.1;
-	SPECULAR = 0.7;
-	ALPHA = mix(0.8, 0.97, fres);
+	VERTEX.y += sin(wpos.x * 0.33 + t * 1.05) * 0.022 + sin(wpos.z * 0.47 - t * 0.85) * 0.018
+		+ sin((wpos.x + wpos.z) * 0.9 + t * 1.7) * 0.008;
+}
+
+float scene_depth(vec2 uv, mat4 inv_proj) {
+	float raw = texture(depth_tex, uv).r;
+	vec4 v = inv_proj * vec4(uv * 2.0 - 1.0, raw, 1.0);
+	return v.z / v.w;
+}
+
+void fragment() {
+	if (length(wpos.xz - NODE_POSITION_WORLD.xz) > radius) { discard; }
+	float t = TIME;
+	vec3 n1 = texture(normal_a, wpos.xz * 0.06 + vec2(t * 0.011, t * 0.006)).rgb * 2.0 - 1.0;
+	vec3 n2 = texture(normal_b, wpos.xz * 0.14 + vec2(-t * 0.009, t * 0.015)).rgb * 2.0 - 1.0;
+	vec3 nm = normalize(vec3(n1.xy + n2.xy, n1.z * n2.z));
+	NORMAL_MAP = nm * 0.5 + 0.5;
+	NORMAL_MAP_DEPTH = 0.55;
+
+	float depth = max(VERTEX.z - scene_depth(SCREEN_UV, INV_PROJECTION_MATRIX), 0.0);
+	vec2 ruv = SCREEN_UV + nm.xy * refract_strength * clamp(depth * 0.7, 0.0, 1.0);
+	float z2 = scene_depth(ruv, INV_PROJECTION_MATRIX);
+	if (z2 > VERTEX.z) { ruv = SCREEN_UV; } else { depth = max(VERTEX.z - z2, 0.0); }
+	vec3 behind = textureLod(screen_tex, ruv, 0.0).rgb;
+	vec3 trans = exp(-absorb * depth);
+	vec3 body_col = mix(shallow_col, deep_col, clamp(depth / 5.0, 0.0, 1.0));
+	vec3 body = behind * trans + body_col * (1.0 - trans);
+
+	float fn = texture(foam_tex, wpos.xz * 0.22 + vec2(t * 0.015, -t * 0.01)).r;
+	float shore = 1.0 - smoothstep(0.0, 0.45, depth);
+	float foam = smoothstep(0.45, 0.8, shore * (0.55 + 0.9 * fn) + 0.12 * sin(t * 1.4 + fn * 6.0));
+	foam *= smoothstep(0.0, 0.04, depth);
+
+	float fres = 0.02 + 0.98 * pow(1.0 - clamp(dot(NORMAL, VIEW), 0.0, 1.0), 5.0);
+	ALBEDO = mix(body_col * 0.25, vec3(0.86, 0.9, 0.9), foam);
+	EMISSION = body * (1.0 - fres) * (1.0 - foam);
+	ROUGHNESS = mix(0.035, 0.75, foam);
+	SPECULAR = 0.6;
+	METALLIC = 0.0;
+	ALPHA = clamp(depth * 8.0, 0.0, 1.0);
 }
 """
+
+
+func _noise_tex(size: int, freq: float, seed_v: int, normal: bool, bump: float) -> NoiseTexture2D:
+	var n := FastNoiseLite.new()
+	n.seed = seed_v
+	n.frequency = freq
+	n.fractal_octaves = 4
+	n.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
+	var tex := NoiseTexture2D.new()
+	tex.width = size
+	tex.height = size
+	tex.seamless = true
+	tex.noise = n
+	tex.generate_mipmaps = true
+	if normal:
+		tex.as_normal_map = true
+		tex.bump_strength = bump
+	return tex
+
+
+## Clusters of lily pads (some flowering) in the shallows round the lake.
+func _build_lily_pads() -> void:
+	if _props_lib == null and ResourceLoader.exists(PROPS_GLB):
+		_props_lib = load(PROPS_GLB).instantiate()
+	if _props_lib == null:
+		return
+	var src := _props_lib.find_child("LilyPads", true, false) as MeshInstance3D
+	if src == null:
+		return
+	var r := RandomNumberGenerator.new()
+	r.seed = 61
+	for k in 9:
+		var a := r.randf() * TAU
+		if absf(wrapf(a - atan2(0.25, -1.0), -PI, PI)) < 0.5:
+			continue   # keep the dock approach clear
+		var d := r.randf_range(LAKE_R - 6.0, LAKE_R - 1.5)
+		var p := LAKE + Vector3(cos(a) * d, 0.0, sin(a) * d)
+		if _ground(p) > WATER_Y - 0.05:
+			continue
+		var mi := MeshInstance3D.new()
+		mi.mesh = src.mesh
+		mi.position = Vector3(p.x, WATER_Y + 0.015, p.z)
+		mi.rotation.y = r.randf() * TAU
+		mi.scale = Vector3.ONE * r.randf_range(0.8, 1.25)
+		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		add_child(mi)
+
+
+func _build_lake() -> void:
+	var water := MeshInstance3D.new()
+	var plane := PlaneMesh.new()
+	plane.size = Vector2.ONE * (LAKE_R + 7.0) * 2.0
+	plane.subdivide_width = 96
+	plane.subdivide_depth = 96
+	water.mesh = plane
+	var sh := Shader.new()
+	sh.code = WATER_SHADER
 	var wm := ShaderMaterial.new()
 	wm.shader = sh
+	wm.set_shader_parameter("radius", LAKE_R + 7.0)
+	wm.set_shader_parameter("normal_a", _noise_tex(512, 0.012, 11, true, 5.0))
+	wm.set_shader_parameter("normal_b", _noise_tex(512, 0.03, 23, true, 3.0))
+	wm.set_shader_parameter("foam_tex", _noise_tex(256, 0.05, 37, false, 0.0))
 	water.material_override = wm
 	water.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	water.position = Vector3(LAKE.x, WATER_Y, LAKE.z)
 	add_child(water)
+	_build_lily_pads()
 	# Wade in to your knees, no further.
 	var block := StaticBody3D.new()
 	var cs := CollisionShape3D.new()

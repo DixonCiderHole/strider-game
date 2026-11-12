@@ -1,4 +1,6 @@
 extends Node3D
+
+const GS = preload("res://scripts/game_state.gd")
 ## The female lead. Uses models/femalelead_rigged.glb (her Meshy model with a
 ## skeleton added for this game) and animates the bones in code.
 ## Modes: "idle" (standing, breathing), "drag" (bent over, both hands on
@@ -50,6 +52,14 @@ func follow(p) -> void:
 	player = p
 	mode = "idle"
 	add_to_group("party_member")
+	if GS.flags.get("knows_ilsa", false):
+		party_name = "ILSA"
+	if get_node_or_null("Talk") == null:
+		var talk = load("res://scripts/talk_point.gd").new()
+		talk.name = "Talk"
+		talk.who = "survivor"
+		talk.member = self
+		add_child(talk)
 
 
 func _ready() -> void:
@@ -163,7 +173,7 @@ func _try_fire() -> void:
 		return
 	_cd = fire_interval * randf_range(0.85, 1.2)
 	var from := _muzzle()
-	_target.take_damage(damage, (aim - from).normalized())
+	_target.take_damage(damage * GS.ally_damage_mult(), (aim - from).normalized())
 	var bolt := BoltScript.new()
 	get_parent().add_child(bolt)
 	bolt.launch(from, aim, true, BOLT_COLOR)

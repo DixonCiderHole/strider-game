@@ -543,7 +543,7 @@ func _refresh_stats() -> void:
 	_show_weapon_model()
 	var w := GS.item(GS.equipment.get(weapon, ""))
 	damage = GS.player_damage() * float(w.get("damage", 1.0))
-	fire_interval = float(w.get("rate", 0.16))
+	fire_interval = float(w.get("rate", 0.16)) / GS.fire_rate_mult()
 	var old_max := max_health
 	max_health = GS.player_max_health()
 	if max_health > old_max and old_max > 0.0:
@@ -606,7 +606,7 @@ func _start_reload() -> void:
 	if GS.count("cartridge") <= 0:
 		GS.toast("No blaster cartridges. Craft some at the bench.")
 		return
-	_reload_t = 1.4 * (0.6 if GS.rank("quick_hands") > 0 else 1.0)
+	_reload_t = 1.4 * GS.reload_time_mult()
 	Sfx.ui("crate_open", -10.0, 0.1)
 
 
@@ -677,7 +677,7 @@ func _throw_grenade() -> void:
 	var dur := 0.25 + from.distance_to(to) * 0.04
 	tw.tween_method(_grenade_arc.bind(g, from, to), 0.0, 1.0, dur)
 	tw.tween_interval(0.6)
-	tw.tween_callback(_grenade_boom.bind(g, float(it.get("damage", 60.0)), float(it.get("radius", 4.0))))
+	tw.tween_callback(_grenade_boom.bind(g, float(it.get("damage", 60.0)) * GS.grenade_mult(), float(it.get("radius", 4.0)) + GS.grenade_radius_bonus()))
 
 
 func _grenade_arc(t: float, g: Node3D, from: Vector3, to: Vector3) -> void:
@@ -718,6 +718,13 @@ func _explode(at: Vector3, dmg: float, radius: float) -> void:
 
 
 func _process(delta: float) -> void:
+	_since_hit += delta
+	_invuln_t = maxf(_invuln_t - delta, 0.0)
+	if not is_dead and not display_only and _since_hit > 5.0 and health < max_health:
+		var rr := GS.regen_rate()
+		if rr > 0.0:
+			health = minf(health + rr * delta, max_health)
+			health_changed.emit(health, max_health)
 	if _reload_t > 0.0:
 		_reload_t -= delta
 		if _reload_t <= 0.0:
@@ -1027,7 +1034,11 @@ func _update_aim_point() -> void:
 		return
 	var space := get_world_3d().direct_space_state
 	var centre := get_viewport().get_visible_rect().size * 0.5
+	if centre.x < 1.0 or centre.y < 1.0:
+		return   # window minimised / hidden: no valid view to aim from
 	var from := camera.project_ray_origin(centre)
+	if not from.is_finite():
+		return
 	var to := from + _view_dir() * 250.0
 	var hit := space.intersect_ray(PhysicsRayQueryParameters3D.create(from, to, 1 | 4))
 	_aim_point = hit["position"] if not hit.is_empty() else to
@@ -1062,9 +1073,20 @@ func _shoot() -> void:
 		target_point = hit["position"]
 		var col = hit["collider"]
 		if col != null and col.has_method("take_damage"):
-			col.take_damage(damage, (target_point - global_position).normalized())
+			var dmg := damage
+			var hp = col.get("health")
+			var hp_max = col.get("max_health")
+			if GS.rank("executioner") > 0 and hp != null and hp_max != null and float(hp_max) > 0.0 and float(hp) / float(hp_max) < 0.3:
+				dmg *= 1.4
+			var crit := randf() < GS.crit_chance()
+			if crit:
+				dmg *= GS.crit_mult()
+				_crit_popup(target_point, dmg)
+			col.take_damage(dmg, (target_point - global_position).normalized())
 			var killed: bool = col.has_method("is_dead") and col.is_dead()
 			hit_landed.emit(killed)
+			if killed and GS.rank("adrenaline") > 0:
+				heal(6.0 * GS.rank("adrenaline"))
 			Sfx.at(target_point, "impact", -8.0, 0.15, 6.0)
 
 	var bolt := BoltScript.new()
@@ -1078,8 +1100,43 @@ func _shoot() -> void:
 
 # ------------------------------------------------------------ health
 
+## Small "CRIT" number that floats up off the target.
+func _crit_popup(at: Vector3, dmg: float) -> void:
+	var l := Label3D.new()
+	l.text = "CRIT %d" % int(round(dmg))
+	l.font_size = 44
+	l.pixel_size = 0.004
+	l.outline_size = 10
+	l.modulate = Color(1.0, 0.75, 0.25)
+	l.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	l.no_depth_test = true
+	get_parent().add_child(l)
+	l.global_position = at + Vector3.UP * 0.3
+	var tw := l.create_tween().set_parallel(true)
+	tw.tween_property(l, "global_position", at + Vector3.UP * 1.3, 0.7)
+	tw.tween_property(l, "modulate:a", 0.0, 0.7).set_delay(0.25)
+	tw.chain().tween_callback(l.queue_free)
+
+
+var _since_hit := 99.0
+var _invuln_t := 0.0
+
 func take_damage(amount: float, _from_dir := Vector3.ZERO) -> void:
-	if is_dead:
+	if is_dead or _invuln_t > 0.0:
+		return
+	if randf() < GS.evade_chance():
+		_combat_text("EVADED", Color(0.6, 0.85, 1.0))
+		return
+	amount *= GS.damage_taken_mult()
+	if randf() < GS.block_chance():
+		amount *= 1.0 - GS.BLOCK_ABSORB
+		_combat_text("BLOCKED", Color(0.75, 0.8, 0.9))
+	_since_hit = 0.0
+	if health - amount <= 0.0 and health_floor <= 0.0 and GS.try_last_stand():
+		health = 1.0
+		_invuln_t = 3.0
+		health_changed.emit(health, max_health)
+		_combat_text("LAST STAND", Color(1.0, 0.35, 0.25))
 		return
 	health = maxf(health - amount, health_floor)
 	health_changed.emit(health, max_health)
@@ -1088,6 +1145,23 @@ func take_damage(amount: float, _from_dir := Vector3.ZERO) -> void:
 		_die()
 	elif tree != null and anim.has_animation("hit"):
 		tree.set("parameters/hit_shot/request", AnimationNodeOneShot.ONE_SHOT_REQUEST_FIRE)
+
+
+func _combat_text(text: String, col: Color) -> void:
+	var l := Label3D.new()
+	l.text = text
+	l.font_size = 40
+	l.pixel_size = 0.004
+	l.outline_size = 10
+	l.modulate = col
+	l.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	l.no_depth_test = true
+	add_child(l)
+	l.position = Vector3(0.0, 2.2, 0.0)
+	var tw := l.create_tween().set_parallel(true)
+	tw.tween_property(l, "position:y", 2.9, 0.8)
+	tw.tween_property(l, "modulate:a", 0.0, 0.8).set_delay(0.3)
+	tw.chain().tween_callback(l.queue_free)
 
 
 func heal(amount: float) -> void:
