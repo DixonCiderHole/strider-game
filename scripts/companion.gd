@@ -1,4 +1,5 @@
 extends CharacterBody3D
+const GS = preload("res://scripts/game_state.gd")
 ## The salvaged droid: follows you, fights creatures, and takes orders.
 ##   1  Follow me        2  Hold position
 ##   3  Go there / attack what the crosshair is on
@@ -53,6 +54,12 @@ var _next_arm := 0
 
 # Timers / state
 var _cd := 0.0
+## Fires in quick bursts like a heavy repeater. Same damage over time as one
+## full shot every fire_interval: each bolt does BOLT_MULT of the droid's
+## damage, four to a burst, then a pause.
+const BURST := 4
+const BOLT_MULT := 0.6
+var _burst_left := 0
 var _gait_t := 0.0
 var _time := 0.0
 var _last_yaw := 0.0
@@ -71,6 +78,10 @@ func _ready() -> void:
 	else:
 		add_to_group("companion")
 		add_to_group("party_member")
+		# Droid-parts station modules.
+		max_health *= GS.droid_health_mult()
+		health = max_health
+		fire_interval /= GS.droid_fire_rate_mult()
 		var talk = load("res://scripts/talk_point.gd").new()
 		talk.name = "Talk"
 		talk.who = "droid"
@@ -342,10 +353,14 @@ func _try_fire(target) -> void:
 		if barrel_dir.angle_to(to_t) > AIM_TOLERANCE:
 			continue
 		_next_arm = (_next_arm + i + 1) % _arms.size()
-		_cd = fire_interval
+		if _burst_left <= 0:
+			_burst_left = BURST
+		_burst_left -= 1
+		# 0.12 s between shots, then a pause (at the base rate of fire).
+		_cd = fire_interval * (0.27 if _burst_left > 0 else 1.6)
 		var from := m.global_position
 		var aim := _aim_point(target)
-		target.take_damage(damage, (aim - from).normalized())
+		target.take_damage(damage * BOLT_MULT, (aim - from).normalized())
 		var bolt := BoltScript.new()
 		get_parent().add_child(bolt)
 		bolt.launch(from, aim, true, BOLT_COLOR)

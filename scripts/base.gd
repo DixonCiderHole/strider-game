@@ -10,6 +10,7 @@ const GS = preload("res://scripts/game_state.gd")
 const MB = preload("res://scripts/menu_backdrop.gd")
 const Sfx = preload("res://scripts/sfx.gd")
 const PlayerScript = preload("res://scripts/player.gd")
+const MapPoi = preload("res://scripts/map_poi.gd")
 const CompanionScript = preload("res://scripts/companion.gd")
 const AllyScript = preload("res://scripts/ally.gd")
 const OverlayScript = preload("res://scripts/overlay.gd")
@@ -108,6 +109,7 @@ func _ready() -> void:
 	_build_campfire()
 	_build_crates()
 	_build_trail_exit()
+	_build_map_points()
 	_build_lake()
 	_build_spires()
 	_build_outpost()
@@ -180,6 +182,7 @@ func _ready() -> void:
 	_build_bench()
 	_build_resources()
 	_build_pod_wreck()
+	_decorate_cave()
 	Sfx.loop(self, "forest_loop", -16.0, 6.0, false)
 	if _first_arrival:
 		_her_first_morning()
@@ -577,6 +580,7 @@ func _build_cave() -> void:
 	inner_mi.mesh = inner
 	inner_mi.material_override = mat
 	inner_mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_DOUBLE_SIDED
+	inner_mi.layers = 1 | 2   # layer 2: the only thing the cave art decals paint on
 	cave.add_child(inner_mi)
 	var outer_mi := MeshInstance3D.new()
 	outer_mi.mesh = _shell_mesh(1.6, 1.4, false)
@@ -988,6 +992,165 @@ func _build_crates() -> void:
 ## The way back to the crash site: no sign, just a gap in the trees where the
 ## path squeezes between two mossy boulders, a fallen log beside it and
 ## ferns closing in.
+# ---------------------------------------------------------------- cave art
+
+## Paintings on the cave walls (models/cave_art, made by
+## tools/assetgen/cave_art.py): [image, direction from the cave centre,
+## height of the aim point, width/height in metres, glows?].
+const CAVE_ART := [
+	["vaari_hunt", Vector3(-1.0, 0.08, 0.12), 2.0, 3.4, false],
+	["hands_spirals", Vector3(1.0, 0.15, 0.18), 2.1, 2.8, false],
+	["sky_fall", Vector3(0.08, 0.3, -1.0), 2.4, 3.8, true],
+	["k7_tally", Vector3(-1.0, -0.05, 0.55), 1.5, 1.9, false],
+]
+
+
+## Wall paintings, crystals growing out of the back wall and rock teeth
+## hanging from the roof. Placed by raycasting onto the cave shell, so it
+## waits a physics frame for the shell's collision to exist.
+func _decorate_cave() -> void:
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	var cave := get_node_or_null("Cave")
+	if cave == null:
+		return
+	var space := get_world_3d().direct_space_state
+	var centre := CAVE + Vector3(0.0, _ground(CAVE), 0.0)
+	var hit_wall := func(from: Vector3, dir: Vector3) -> Dictionary:
+		var q := PhysicsRayQueryParameters3D.create(from, from + dir.normalized() * 20.0, 1)
+		var h := space.intersect_ray(q)
+		if h.is_empty() or h["collider"] != cave:
+			return {}
+		return h
+
+	for art in CAVE_ART:
+		var path := "res://models/cave_art/%s.png" % art[0]
+		if not ResourceLoader.exists(path):
+			continue
+		# Aim at the wall; if a prop is in the way, try nearby spots.
+		var h: Dictionary = {}
+		for lift in [0.0, 0.6, -0.4]:
+			for turn in [0.0, 0.22, -0.22, 0.45, -0.45, 0.7, -0.7]:
+				h = hit_wall.call(centre + Vector3(0.0, art[2] + lift, 0.0), (art[1] as Vector3).rotated(Vector3.UP, turn))
+				if not h.is_empty() and absf((h["normal"] as Vector3).y) < 0.85:
+					break
+				h = {}
+			if not h.is_empty():
+				break
+		if h.is_empty():
+			continue
+		var n: Vector3 = h["normal"]
+		var tex: Texture2D = load(path)
+		var dc := Decal.new()
+		dc.texture_albedo = tex
+		# A faint glow so the pigment reads in the dim cave (the crystal
+		# pigment glows properly). Glow maps are black where there's no paint.
+		if ResourceLoader.exists("res://models/cave_art/%s_glow.png" % art[0]):
+			dc.texture_emission = load("res://models/cave_art/%s_glow.png" % art[0])
+			dc.emission_energy = 1.6 if art[4] else 0.7
+		dc.size = Vector3(art[3], 1.2, art[3])
+		dc.cull_mask = 2
+		dc.normal_fade = 0.35
+		dc.upper_fade = 0.2
+		dc.lower_fade = 0.2
+		# Decals project down their -Y: point Y out of the wall, keep the
+		# picture upright (Z towards the floor in its plane).
+		var side := Vector3.UP.cross(n)
+		if side.length() < 0.1:
+			side = Vector3.RIGHT
+		side = side.normalized()
+		var down := side.cross(n).normalized()
+		dc.global_transform = Transform3D(Basis(side, n, down), h["position"] + n * 0.4)
+		add_child(dc)
+
+	# Crystals: the same growth as on the spires, pushing out of the rock.
+	var crystal := StandardMaterial3D.new()
+	crystal.albedo_color = Color(0.35, 0.85, 1.0, 0.85)
+	crystal.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	crystal.emission_enabled = true
+	crystal.emission = Color(0.2, 0.75, 1.0)
+	crystal.emission_energy_multiplier = 2.4
+	crystal.roughness = 0.1
+	var r := RandomNumberGenerator.new()
+	r.seed = 1717
+	for d in [Vector3(-0.55, -0.12, -1.0), Vector3(0.65, -0.1, -0.85), Vector3(0.25, 0.75, -0.6), Vector3(-0.9, 0.5, -0.4)]:
+		var h: Dictionary = hit_wall.call(centre + Vector3(0.0, 1.6, 0.0), d)
+		if h.is_empty():
+			continue
+		var n: Vector3 = h["normal"]
+		var cl := Node3D.new()
+		var t := n.cross(Vector3.FORWARD if absf(n.y) > 0.9 else Vector3.UP).normalized()
+		cl.global_transform = Transform3D(Basis(t, n, t.cross(n)).orthonormalized(), h["position"] - n * 0.05)
+		add_child(cl)
+		for c in r.randi_range(5, 9):
+			var mi := MeshInstance3D.new()
+			var pm := CylinderMesh.new()
+			pm.top_radius = 0.0
+			pm.bottom_radius = r.randf_range(0.05, 0.13)
+			pm.height = r.randf_range(0.3, 0.9)
+			pm.radial_segments = 6
+			pm.rings = 1
+			mi.mesh = pm
+			mi.material_override = crystal
+			mi.position = Vector3(r.randf_range(-0.35, 0.35), pm.height * 0.4, r.randf_range(-0.35, 0.35))
+			mi.rotation = Vector3(r.randf_range(-0.6, 0.6), r.randf() * TAU, r.randf_range(-0.6, 0.6))
+			mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			cl.add_child(mi)
+		var glow := OmniLight3D.new()
+		glow.light_color = Color(0.3, 0.8, 1.0)
+		glow.light_energy = 0.7
+		glow.omni_range = 3.0
+		glow.position.y = 0.5
+		cl.add_child(glow)
+
+	# Rock teeth hanging from the roof, kept above head height.
+	var rock_mat: Material = (cave.get_child(0) as MeshInstance3D).material_override
+	var floor_y := _ground(CAVE)
+	for i in 26:
+		var a := r.randf() * TAU
+		var rad := sqrt(r.randf()) * 0.8
+		var p := centre + Vector3(cos(a) * CAVE_R.x * rad, 1.0, sin(a) * CAVE_R.z * rad * 0.9 - 0.6)
+		var h: Dictionary = hit_wall.call(p, Vector3.UP)
+		if h.is_empty():
+			continue
+		var top: Vector3 = h["position"]
+		var length := r.randf_range(0.35, 1.3)
+		if top.y - length < floor_y + 2.6:
+			length = top.y - floor_y - 2.6
+		if length < 0.25:
+			continue
+		var mi := MeshInstance3D.new()
+		var cm := CylinderMesh.new()
+		cm.top_radius = r.randf_range(0.12, 0.3)
+		cm.bottom_radius = 0.0
+		cm.height = length
+		cm.radial_segments = 7
+		cm.rings = 2
+		mi.mesh = cm
+		mi.material_override = rock_mat
+		mi.position = top - Vector3(0.0, length * 0.5 - 0.08, 0.0)
+		mi.rotation = Vector3(r.randf_range(-0.12, 0.12), r.randf() * TAU, r.randf_range(-0.12, 0.12))
+		add_child(mi)
+
+
+## Places shown on the pause-menu map.
+func _build_map_points() -> void:
+	MapPoi.add(self, FIRE_POS, "Base Camp", "camp",
+			"Your shelter in the cliff cave. Beds and the campfire (rest to heal), the workbench, armory, med station, storage and radio.")
+	MapPoi.add(self, Vector3(0.0, 0.0, 24.0), "Trail to the Crash Site", "exit",
+			"A gap in the trees between two mossy boulders, south of the cave. Follow it back to the crash site to fight for more salvage.")
+	MapPoi.add(self, POD_POS, "Crashed Escape Pod", "resource",
+			"East of camp. Metal scrap, plastic and supply crates.")
+	MapPoi.add(self, LAKE, "Stillwater", "landmark",
+			"A still lake to the east with an old jetty on its west shore.")
+	MapPoi.add(self, SPIRES, "Crystal Spires", "danger",
+			"Tall rock spires in the west, grown through with glowing crystal. Ore veins at their feet. Something in them hums.")
+	MapPoi.add(self, OUTPOST, "Survey Outpost K-7", "landmark",
+			"North-east. Prefab habitat and survey lab left by the first teams. Their logs end mid-sentence.")
+	MapPoi.add(self, MEADOW, "Wildflower Meadow", "landmark",
+			"A flower meadow in the south-west with twisted old trees.")
+
+
 func _build_trail_exit() -> void:
 	var pos := Vector3(0.0, 0.0, 24.0)
 	pos.y = _ground(pos)
@@ -1192,6 +1355,11 @@ func _build_ui() -> void:
 	_p_buy = UI.button("UPGRADE", 380)
 	_p_buy.pressed.connect(_buy)
 	v.add_child(_p_buy)
+	var mh := UI.label("MODULES  ·  one-time fittings", 20, UI.ACCENT)
+	v.add_child(mh)
+	_p_mods = UI.vbox(8)
+	_p_mods.custom_minimum_size = Vector2(640, 0)
+	v.add_child(_p_mods)
 	_p_close = UI.button("CLOSE", 380)
 	_p_close.pressed.connect(_close_panel)
 	v.add_child(_p_close)
@@ -1238,7 +1406,11 @@ func _close_panel() -> void:
 	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 
 
+var _p_mods: VBoxContainer
+
+
 func _refresh_panel() -> void:
+	_refresh_mods()
 	var t: Dictionary = GS.TRACKS[_panel_track]
 	var lvl := GS.level(_panel_track)
 	var mx: int = t["max"]
@@ -1256,6 +1428,43 @@ func _refresh_panel() -> void:
 		_p_buy.text = "UPGRADE  ·  %d salvage" % GS.cost(_panel_track)
 		_p_buy.disabled = not GS.can_upgrade(_panel_track)
 	_p_salvage.text = "You have %d salvage" % GS.salvage
+
+
+func _refresh_mods() -> void:
+	for c in _p_mods.get_children():
+		c.queue_free()
+	for m in GS.MODS.get(_panel_track, []):
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 14)
+		var info := UI.vbox(2)
+		info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		var owned := GS.has_mod(m["id"])
+		info.add_child(UI.label(m["name"].to_upper(), 18, Color(0.45, 0.9, 0.5) if owned else UI.TEXT))
+		var bl := UI.label(m["blurb"], 15, UI.MUTED)
+		bl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		bl.custom_minimum_size = Vector2(400, 0)
+		info.add_child(bl)
+		row.add_child(info)
+		var b := UI.button("INSTALLED" if owned else "INSTALL  ·  %d" % int(m["cost"]), 220)
+		b.alignment = HORIZONTAL_ALIGNMENT_CENTER
+		b.disabled = owned or GS.salvage < int(m["cost"])
+		b.pressed.connect(_buy_mod.bind(m["id"]))
+		row.add_child(b)
+		_p_mods.add_child(row)
+
+
+func _buy_mod(id: String) -> void:
+	if not GS.buy_mod(id):
+		return
+	Sfx.ui("upgrade", -4.0)
+	# Apply straight away where the effect isn't read live.
+	if id == "droid_plating" and is_instance_valid(droid):
+		droid.max_health *= GS.droid_health_mult()
+		droid.health = droid.max_health
+	elif id == "droid_actuators" and is_instance_valid(droid):
+		droid.fire_interval /= GS.droid_fire_rate_mult()
+	GS.changed()
+	_refresh_panel()
 
 
 func _buy() -> void:

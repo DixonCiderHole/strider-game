@@ -35,6 +35,67 @@ const TRACKS := {
 	},
 }
 
+## One-time modules sold at the three cave stations, on top of each track's
+## levels. Owned ones are kept as GS.flags["mod:<id>"].
+const MODS := {
+	"blaster": [
+		{"id": "coil_accel", "name": "Coil Accelerator", "cost": 60,
+			"blurb": "Rewound firing coils. Fire 15% faster."},
+		{"id": "targeting_optic", "name": "Targeting Optic", "cost": 70,
+			"blurb": "A salvaged scope that paints weak points. +8% critical hit chance."},
+		{"id": "extended_cell", "name": "Extended Power Cell", "cost": 50,
+			"blurb": "A bigger cell from the lander's emergency bank. +10 bolts per magazine."},
+	],
+	"armor": [
+		{"id": "reactive_plating", "name": "Reactive Plating", "cost": 70,
+			"blurb": "Layered plates that crack to soak a blow. Take 12% less damage."},
+		{"id": "nano_weave", "name": "Nano-Weave Liner", "cost": 60,
+			"blurb": "A medical under-layer that knits wounds. Regenerate 2 health a second when out of a fight."},
+		{"id": "kinetic_dampers", "name": "Kinetic Dampers", "cost": 60,
+			"blurb": "Joint servos that throw you clear. +6% chance to evade an attack."},
+	],
+	"droid": [
+		{"id": "droid_plating", "name": "Hardened Chassis", "cost": 70,
+			"blurb": "Hull plating from the wreck. The droid has 60% more health."},
+		{"id": "droid_actuators", "name": "Rapid Actuators", "cost": 65,
+			"blurb": "Faster weapon-arm servos. The droid fires 30% faster."},
+		{"id": "salvage_scanner", "name": "Salvage Scanner", "cost": 55,
+			"blurb": "The droid picks out useful scrap. +15% salvage from everything."},
+	],
+}
+
+
+static func has_mod(id: String) -> bool:
+	ensure_loaded()
+	return flags.get("mod:" + id, false)
+
+
+static func mod_def(id: String) -> Dictionary:
+	for t in MODS:
+		for m in MODS[t]:
+			if m["id"] == id:
+				return m
+	return {}
+
+
+static func buy_mod(id: String) -> bool:
+	var m := mod_def(id)
+	if m.is_empty() or has_mod(id) or salvage < int(m["cost"]):
+		return false
+	salvage -= int(m["cost"])
+	flags["mod:" + id] = true
+	save()
+	return true
+
+
+static func droid_health_mult() -> float:
+	return 1.6 if has_mod("droid_plating") else 1.0
+
+
+static func droid_fire_rate_mult() -> float:
+	return 1.3 if has_mod("droid_actuators") else 1.0
+
+
 ## Salvage per creature killed in the crash-site waves, plus a bonus for clearing them.
 const SALVAGE_PER_KILL := 6
 const CLEAR_BONUS := 30
@@ -140,6 +201,9 @@ static func enter_area(scene: String) -> void:
 	ensure_loaded()
 	last_area = scene
 	if not horde_mode:
+		# A new level means a new checkpoint (drop any mid-level one).
+		if checkpoint != scene:
+			flags.erase("area_cp")
 		checkpoint = scene
 	save()
 
@@ -277,7 +341,7 @@ static func ally_damage_mult() -> float:
 # ---------------------------------------------------------------- combat stats
 
 static func crit_chance() -> float:
-	return minf(0.05 + 0.01 * attr("critical") + 0.03 * rank("deadeye"), 0.75)
+	return minf(0.05 + 0.01 * attr("critical") + 0.03 * rank("deadeye") + (0.08 if has_mod("targeting_optic") else 0.0), 0.75)
 
 
 static func crit_mult() -> float:
@@ -285,7 +349,7 @@ static func crit_mult() -> float:
 
 
 static func fire_rate_mult() -> float:
-	return 1.0 + 0.02 * attr("alacrity") + 0.08 * rank("rapid_fire")
+	return 1.0 + 0.02 * attr("alacrity") + 0.08 * rank("rapid_fire") + (0.15 if has_mod("coil_accel") else 0.0)
 
 
 static func reload_time_mult() -> float:
@@ -293,7 +357,7 @@ static func reload_time_mult() -> float:
 
 
 static func evade_chance() -> float:
-	return minf(0.008 * attr("defense") + 0.04 * rank("evasive"), 0.35)
+	return minf(0.008 * attr("defense") + 0.04 * rank("evasive") + (0.06 if has_mod("kinetic_dampers") else 0.0), 0.35)
 
 
 static func block_chance() -> float:
@@ -304,12 +368,12 @@ const BLOCK_ABSORB := 0.4
 
 
 static func damage_taken_mult() -> float:
-	return 1.0 - 0.05 * rank("thick_skin")
+	return 1.0 - 0.05 * rank("thick_skin") - (0.12 if has_mod("reactive_plating") else 0.0)
 
 
 ## Health/s regenerated once you've gone 5 s without being hit.
 static func regen_rate() -> float:
-	return 0.15 * attr("endurance") + 1.5 * rank("second_wind")
+	return 0.15 * attr("endurance") + 1.5 * rank("second_wind") + (2.0 if has_mod("nano_weave") else 0.0)
 
 
 static func grenade_mult() -> float:
@@ -325,7 +389,7 @@ static func xp_mult() -> float:
 
 
 static func salvage_mult() -> float:
-	return 1.0 + 0.2 * rank("salvager")
+	return 1.0 + 0.2 * rank("salvager") + (0.15 if has_mod("salvage_scanner") else 0.0)
 
 
 ## Last Stand: true (and starts the 2 minute cooldown) if it can save you now.
@@ -532,7 +596,7 @@ static func module_bonus(key: String) -> float:
 
 
 static func mag_size() -> int:
-	return MAG_SIZE + 5 * rank("extended_mag") + int(module_bonus("mag"))
+	return MAG_SIZE + 5 * rank("extended_mag") + int(module_bonus("mag")) + (10 if has_mod("extended_cell") else 0)
 
 
 static func heal_amount(id: String) -> float:

@@ -67,6 +67,8 @@ func _ready() -> void:
 	_build_forest()
 	_build_rocks()
 	_build_wreck()
+	load("res://scripts/map_poi.gd").add(self, WRECK_POS, "Your Lander", "landmark",
+			"Your squad's assault lander, broken open in the clearing. Salvage is scattered around it.")
 	if GS.menu_preview:
 		var cp := Vector3(9.0, 0.0, 11.0)
 		MB.make(self, cp + Vector3(0.0, ground_y(cp) + 2.4, 0.0), WRECK_POS + Vector3(0.0, ground_y(WRECK_POS) + 1.4, 0.0))
@@ -85,6 +87,10 @@ func _ready() -> void:
 	player.max_health = GS.player_max_health()
 	player.health = player.max_health
 	player.position = Vector3(0.0, ground_y(Vector3(0.0, 0.0, 5.0)) + 0.1, 5.0)
+	# Your first time through the opening waves: endless ammo, so the fight
+	# is about learning to move and shoot, not counting cartridges.
+	if not horde and not GS.reached_base:
+		player.infinite_ammo = true
 	add_child(player)
 	player.health_changed.connect(hud.set_health)
 	player.died.connect(_on_player_died)
@@ -121,6 +127,65 @@ func _process(delta: float) -> void:
 	for i in _fire_lights.size():
 		var l := _fire_lights[i]
 		l.light_energy = 2.6 + sin(_time * 11.0 + i * 2.0) * 0.5 + sin(_time * 23.0 + i) * 0.3
+	_watch_stragglers(delta)
+
+
+# ---------------------------------------------------------------- stragglers
+# A creature that ends up wedged in rocks or trees, or slips under the
+# ground, would hold the wave open forever. Once a second, check each one:
+# fallen through, out of bounds, or stuck in one spot (and not fighting you)
+# for 5 seconds sends it back into the clearing at a clear spot.
+
+var _watch_t := 1.0
+var _watch := {}   # creature -> [last position, seconds without moving]
+
+
+func _watch_stragglers(delta: float) -> void:
+	_watch_t -= delta
+	if _watch_t > 0.0 or player == null:
+		return
+	_watch_t = 1.0
+	var seen := {}
+	for e in get_tree().get_nodes_in_group("enemy"):
+		if not is_instance_valid(e) or e.is_dead():
+			continue
+		seen[e] = true
+		var p: Vector3 = e.global_position
+		var lost := p.y < ground_y(p) - 2.5 or Vector2(p.x, p.z).length() > ARENA_RADIUS - 2.0
+		var rec: Array = _watch.get(e, [p, 0.0])
+		if p.distance_to(rec[0]) < 0.8 and p.distance_to(player.global_position) > 4.0:
+			rec[1] = float(rec[1]) + 1.0
+		else:
+			rec = [p, 0.0]
+		if lost or float(rec[1]) >= 5.0:
+			e.global_position = _safe_spawn_point(20.0, 28.0)
+			e.velocity = Vector3.ZERO
+			rec = [e.global_position, 0.0]
+		_watch[e] = rec
+	for e in _watch.keys():
+		if not seen.has(e):
+			_watch.erase(e)
+
+
+## A point on the ground in a ring round the clearing with nothing solid
+## (rocks, trunks, the wreck) in the way. Falls back to the last try.
+func _safe_spawn_point(r_min: float, r_max: float) -> Vector3:
+	var space := get_world_3d().direct_space_state
+	var q := PhysicsShapeQueryParameters3D.new()
+	var ball := SphereShape3D.new()
+	ball.radius = 0.9
+	q.shape = ball
+	q.collision_mask = 1
+	var p := Vector3.ZERO
+	for i in 14:
+		var a := rng.randf() * TAU
+		var r := rng.randf_range(r_min, r_max)
+		p = Vector3(cos(a) * r, 0.0, sin(a) * r)
+		p.y = ground_y(p)
+		q.transform = Transform3D(Basis(), p + Vector3.UP * 1.3)
+		if space.intersect_shape(q, 1).is_empty():
+			break
+	return p + Vector3.UP * 0.4
 
 
 # ---------------------------------------------------------------- waves
@@ -168,10 +233,7 @@ func _horde_count(i: int) -> int:
 
 func _spawn_enemy() -> void:
 	var e = EnemyScript.new()
-	var a := rng.randf() * TAU
-	var r := rng.randf_range(30.0, 38.0)
-	e.position = Vector3(cos(a) * r, 0.0, sin(a) * r)
-	e.position.y = ground_y(e.position) + 0.4
+	e.position = _safe_spawn_point(30.0, 38.0)
 	if horde:
 		e.speed += minf(wave_index * 0.45, 4.0)
 		e.health += wave_index * 12.0

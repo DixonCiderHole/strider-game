@@ -726,7 +726,7 @@ func _refresh_party() -> void:
 	_party_box.add_child(_member_column("droid", "STRIDER DROID", "Companion  ·  Combat droid", int(sd["level"]), int(sd["xp"]),
 			d.health if d != null else 100.0, d.max_health if d != null else 100.0, [
 		["WEAPON", "Twin blasters"],
-		["DAMAGE / BOLT", str(int(GS.droid_damage()))],
+		["DAMAGE / BOLT", "%d  (bursts of 4)" % int(GS.droid_damage() * 0.6)],
 		["ORDERS", d.order_text() if d != null else "Not deployed here"],
 	]))
 	_set_party_rendering(_tab == "PARTY")
@@ -734,14 +734,54 @@ func _refresh_party() -> void:
 
 # ---------------------------------------------------------------- MAP
 
+const MapPoi = preload("res://scripts/map_poi.gd")
+const MapOverlay = preload("res://scripts/map_overlay.gd")
+const MAP_ZOOMS := [90.0, 160.0, 300.0]   # metres shown top to bottom
+const MAP_SIZE := Vector2(660, 620)
+const AREA_NAMES := {
+	"res://main.tscn": "CRASH SITE",
+	"res://path.tscn": "THE TRAIL",
+	"res://pinned.tscn": "THE CLEARING",
+	"res://drag.tscn": "THE ESCAPE",
+	"res://base.tscn": "BASE CAMP",
+}
+var _map_zoom := 1
+var _map_overlay
+var _map_area: Label
+var _map_list: VBoxContainer
+
+
 func _build_map(page: Control) -> void:
 	var v := UI.vbox(10)
 	page.add_child(v)
-	v.add_child(UI.label("MAP", 30, UI.ACCENT))
+	var top := HBoxContainer.new()
+	top.add_theme_constant_override("separation", 12)
+	v.add_child(top)
+	top.add_child(UI.label("MAP", 30, UI.ACCENT))
+	var sp := Control.new()
+	sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	top.add_child(sp)
+	for z in [["ZOOM IN", -1], ["ZOOM OUT", 1]]:
+		var zb := UI.button(z[0], 150)
+		zb.alignment = HORIZONTAL_ALIGNMENT_CENTER
+		zb.pressed.connect(func():
+			_map_zoom = clampi(_map_zoom + int(z[1]), 0, MAP_ZOOMS.size() - 1)
+			_refresh_map())
+		top.add_child(zb)
+
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 18)
+	row.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	v.add_child(row)
+
+	# The map: a camera looking straight down, with the markers drawn on top.
+	var frame := PanelContainer.new()
+	frame.add_theme_stylebox_override("panel", UI.box(Color(0, 0, 0, 0.6), Color(0.3, 0.3, 0.35, 0.7), 1, 4))
+	row.add_child(frame)
 	var holder := Control.new()
-	holder.custom_minimum_size = Vector2(700, 620)
-	holder.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	v.add_child(holder)
+	holder.custom_minimum_size = MAP_SIZE
+	holder.clip_contents = true
+	frame.add_child(holder)
 	var svc := SubViewportContainer.new()
 	svc.stretch = true
 	UI.full_rect(svc)
@@ -751,7 +791,7 @@ func _build_map(page: Control) -> void:
 	svc.add_child(_map_vp)
 	_map_cam = Camera3D.new()
 	_map_cam.projection = Camera3D.PROJECTION_ORTHOGONAL
-	_map_cam.size = 150.0
+	_map_cam.size = MAP_ZOOMS[_map_zoom]
 	_map_cam.far = 600.0
 	_map_cam.rotation_degrees = Vector3(-90, 0, 0)
 	# Own environment: no fog, so the ground shows from high above.
@@ -763,11 +803,45 @@ func _build_map(page: Control) -> void:
 	menv.ambient_light_energy = 1.0
 	_map_cam.environment = menv
 	_map_vp.add_child(_map_cam)
-	_map_marker = UI.label("▲", 30, Color(1.0, 0.3, 0.2))
-	_map_marker.position = Vector2(338, 290)
-	_map_marker.pivot_offset = Vector2(12, 18)
-	holder.add_child(_map_marker)
-	v.add_child(UI.label("▲ You   ·   North is up", 15, UI.MUTED))
+	_map_overlay = MapOverlay.new()
+	UI.full_rect(_map_overlay)
+	holder.add_child(_map_overlay)
+
+	# Where you are and where everything is.
+	var side := PanelContainer.new()
+	var sst := UI.box(Color(0.04, 0.04, 0.05, 0.85), Color(0.3, 0.3, 0.35, 0.6), 1, 4)
+	sst.content_margin_left = 14
+	sst.content_margin_right = 14
+	sst.content_margin_top = 12
+	sst.content_margin_bottom = 12
+	side.add_theme_stylebox_override("panel", sst)
+	side.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(side)
+	var sv := UI.vbox(8)
+	side.add_child(sv)
+	_map_area = UI.label("", 22, UI.TEXT)
+	sv.add_child(_map_area)
+	sv.add_child(UI.label("LOCATIONS  ·  direction and distance from you", 14, UI.MUTED))
+	var scroll := ScrollContainer.new()
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	sv.add_child(scroll)
+	_map_list = UI.vbox(10)
+	_map_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.add_child(_map_list)
+	var legend := HBoxContainer.new()
+	legend.add_theme_constant_override("separation", 14)
+	for k in [["camp", "Camp"], ["exit", "Way out"], ["objective", "Objective"], ["landmark", "Landmark"], ["resource", "Supplies"], ["danger", "Danger"]]:
+		legend.add_child(UI.label("■ " + k[1], 13, MapPoi.colour(k[0])))
+	sv.add_child(legend)
+	v.add_child(UI.label("North is up   ·   ▲ You   ·   Arrows at the edge point to places off the map", 15, UI.MUTED))
+
+
+## "North-east" for a direction from you, north up.
+static func _bearing_name(d: Vector3) -> String:
+	var deg := fposmod(rad_to_deg(atan2(d.x, -d.z)), 360.0)
+	var names := ["North", "North-east", "East", "South-east", "South", "South-west", "West", "North-west"]
+	return names[int(round(deg / 45.0)) % 8]
 
 
 func _refresh_map() -> void:
@@ -775,8 +849,59 @@ func _refresh_map() -> void:
 		return
 	_map_vp.world_3d = player.get_world_3d()
 	_map_cam.current = true
+	_map_cam.size = MAP_ZOOMS[_map_zoom]
 	_map_cam.global_position = player.global_position + Vector3(0, 250, 0)
-	_map_marker.rotation = -player.model.global_rotation.y
+	var scene := get_tree().current_scene
+	var area_name: String = AREA_NAMES.get(scene.scene_file_path if scene != null else "", "UNKNOWN")
+	_map_area.text = "YOU ARE AT:  " + area_name
+
+	# Gather places: map markers, plus whatever the compass is pointing at.
+	var places: Array = []
+	for n in get_tree().get_nodes_in_group("map_poi"):
+		places.append({"pos": (n as Node3D).global_position, "label": n.label, "kind": n.kind, "info": n.info})
+	for n in get_tree().get_nodes_in_group("objective"):
+		if n.is_in_group("map_poi"):
+			continue
+		var lbl: String = n.get_meta("label", "Objective")
+		places.append({"pos": (n as Node3D).global_position, "label": lbl, "kind": "objective",
+				"info": n.get_meta("info", "Where you need to go next.")})
+	var me: Vector3 = player.global_position
+	places.sort_custom(func(a, b):
+		var ka: int = 0 if a["kind"] == "objective" else 1
+		var kb: int = 0 if b["kind"] == "objective" else 1
+		if ka != kb:
+			return ka < kb
+		return me.distance_to(a["pos"]) < me.distance_to(b["pos"]))
+
+	_map_overlay.centre = me
+	_map_overlay.px_per_m = MAP_SIZE.y / MAP_ZOOMS[_map_zoom]
+	_map_overlay.player_yaw = player.model.global_rotation.y
+	_map_overlay.pois = places
+	_map_overlay.queue_redraw()
+
+	for c in _map_list.get_children():
+		c.queue_free()
+	if places.is_empty():
+		_map_list.add_child(UI.label("Nothing charted here yet.", 16, UI.MUTED))
+	for pl in places:
+		var d: Vector3 = pl["pos"] - me
+		d.y = 0.0
+		var dist := d.length()
+		var where := "You're here" if dist < 8.0 else "%s  ·  %d m" % [_bearing_name(d), int(dist)]
+		var box := UI.vbox(1)
+		var head := HBoxContainer.new()
+		head.add_theme_constant_override("separation", 8)
+		head.add_child(UI.label("■", 16, MapPoi.colour(pl["kind"])))
+		var nm := UI.label(String(pl["label"]).to_upper(), 16, UI.TEXT)
+		nm.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		head.add_child(nm)
+		head.add_child(UI.label(where, 15, MapPoi.colour(pl["kind"])))
+		box.add_child(head)
+		if String(pl["info"]) != "":
+			var info := UI.label(pl["info"], 14, UI.MUTED)
+			info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			box.add_child(info)
+		_map_list.add_child(box)
 
 
 # ---------------------------------------------------------------- SKILLS

@@ -18,3 +18,9 @@
 Thumbs.db
 desktop.ini
 .DS_Store
+
+# Previews sent in the Claude chat (saved into the project by the app)
+/Claude outputs/
+
+# Terrain3D's temporary copy of its DLL while the editor is open
+addons/terrain_3d/bin/~*

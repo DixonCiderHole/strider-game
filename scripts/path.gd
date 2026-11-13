@@ -14,6 +14,7 @@ const EnemyScript = preload("res://scripts/enemy.gd")
 const CompanionScript = preload("res://scripts/companion.gd")
 const HudScript = preload("res://scripts/hud.gd")
 const PauseMenuScript = preload("res://scripts/pause_menu.gd")
+const TutorialScript = preload("res://scripts/trail_tutorial.gd")
 
 const TERRAIN_SIZE := 384
 const Z_START := 150.0
@@ -45,6 +46,10 @@ var z_end := Z_END
 var _noise_roll := FastNoiseLite.new()
 var _noise_hill := FastNoiseLite.new()
 var _spawn_t := 6.0
+## First trip only: teaches the controls (and holds the creature trickle).
+var tutorial
+var _respawning := false
+var _fade: ColorRect
 var _alive := 0
 var _kills := 0
 var _beacon_light: OmniLight3D
@@ -112,7 +117,9 @@ func _ready() -> void:
 	hud = HudScript.new()
 	add_child(hud)
 
-	var start := path_point(Z_START - 4.0)
+	# Mid-trail checkpoint, if you reached one (GS.enter_area clears it on a new level).
+	var start_z := float(GS.flags.get("area_cp", Z_START - 4.0))
+	var start := path_point(start_z)
 	player = PlayerScript.new()
 	player.name = "Player"
 	player.damage = GS.player_damage()
@@ -124,7 +131,7 @@ func _ready() -> void:
 	player.died.connect(_on_player_died)
 	player.hit_landed.connect(hud.show_hitmarker)
 	# Face along the trail.
-	var t := path_tangent(Z_START - 4.0)
+	var t := path_tangent(start_z)
 	player.cam_yaw.rotation.y = atan2(-t.x, -t.z)
 	player._facing_yaw = player.cam_yaw.rotation.y
 
@@ -132,7 +139,7 @@ func _ready() -> void:
 	droid.name = "Droid"
 	droid.player = player
 	droid.damage = GS.droid_damage()
-	droid.position = start + path_normal(Z_START) * 2.5 + Vector3(0.0, 0.5, 2.0)
+	droid.position = start + path_normal(start_z) * 2.5 + Vector3(0.0, 0.5, 2.0)
 	add_child(droid)
 	droid.status_changed.connect(hud.set_droid_status)
 	hud.show_droid(true)
@@ -153,6 +160,12 @@ func _ready() -> void:
 		var cp := path_point(zc) + path_normal(zc) * 4.0
 		cp.y = _ground(cp)
 		load("res://scripts/pickup.gd").spawn(self, "crate", "", cp)
+	if not GS.flags.get("trail_tutorial_done", false):
+		tutorial = TutorialScript.new()
+		tutorial.trail = self
+		tutorial.player = player
+		tutorial.hud = hud
+		add_child(tutorial)
 	hud.set_health(player.health, player.max_health)
 	hud.set_hint("Follow the trail   ·   WASD walk   ·   Shift run   ·   Left click fire   ·   Esc pause")
 	hud.show_message("THE TRAIL\nFollow the path to your squad's distress beacon.", 4.5)
@@ -181,7 +194,8 @@ func _process(delta: float) -> void:
 	if _spawn_t <= 0.0:
 		var progress := _progress()
 		_spawn_t = lerpf(5.0, 2.6, progress) * rng.randf_range(0.75, 1.25)
-		if _alive < MAX_ALIVE:
+		var held: bool = tutorial != null and tutorial.holding
+		if _alive < MAX_ALIVE and not held:
 			_spawn_enemy(progress)
 
 	# Reached the beacon.
@@ -255,6 +269,8 @@ func _on_enemy_died() -> void:
 
 func _reach_end() -> void:
 	game_over = true
+	GS.flags["trail_tutorial_done"] = true
+	GS.flags.erase("area_cp")
 	player.input_enabled = false
 	hud.show_message("The beacon... and your squad, scattered across the clearing.\nSomething moves in the trees all around you.", 3.5)
 	GS.add_salvage(_kills * SALVAGE_PER_KILL)
@@ -262,10 +278,46 @@ func _reach_end() -> void:
 	Cutscene.play("ambushed")
 
 
+## Falling on the trail sends you back to the last checkpoint.
 func _on_player_died() -> void:
-	game_over = true
+	if _respawning:
+		return
+	_respawning = true
 	hud.show_message("", 0.0)
-	menu.show_end("YOU FELL ON THE TRAIL", "The creatures drag you into the dark.", "Kills: %d" % _kills, 2.5)
+	await get_tree().create_timer(1.4).timeout
+	await _fade_to(1.0, 0.5)
+	hud.show_message("YOU WERE KILLED", 1.2)
+	await get_tree().create_timer(0.9).timeout
+	# Clear the creatures and put everything back.
+	for e in get_tree().get_nodes_in_group("enemy"):
+		e.queue_free()
+	_alive = 0
+	_spawn_t = 6.0
+	var z := float(GS.flags.get("area_cp", Z_START - 4.0))
+	var t := path_tangent(z)
+	player.revive(path_point(z) + Vector3(0.0, 0.1, 0.0), atan2(-t.x, -t.z))
+	if is_instance_valid(droid):
+		droid.global_position = path_point(z) + path_normal(z) * 2.5 + Vector3(0.0, 0.5, 2.0)
+	if tutorial != null:
+		tutorial.on_respawn()
+	await _fade_to(0.0, 0.6)
+	hud.show_message("Back at the checkpoint.", 2.0)
+	_respawning = false
+
+
+func _fade_to(alpha: float, time: float) -> void:
+	if _fade == null:
+		var layer := CanvasLayer.new()
+		layer.layer = 50
+		add_child(layer)
+		_fade = ColorRect.new()
+		_fade.color = Color(0, 0, 0, 0)
+		_fade.set_anchors_preset(Control.PRESET_FULL_RECT)
+		_fade.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		layer.add_child(_fade)
+	var tw := create_tween()
+	tw.tween_property(_fade, "color:a", alpha, time)
+	await tw.finished
 
 
 # ---------------------------------------------------------------- world
@@ -447,6 +499,8 @@ func _build_beacon() -> void:
 	var beacon := Node3D.new()
 	beacon.position = p
 	beacon.add_to_group("objective")   # gold marker on the compass
+	beacon.set_meta("label", "Distress Beacon")
+	beacon.set_meta("info", "Your squad's beacon at the end of the trail. Follow the path north through the forest.")
 	add_child(beacon)
 	var dark := U.mat(Color(0.15, 0.15, 0.16), 0.5)
 	var base := MeshInstance3D.new()

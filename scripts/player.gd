@@ -34,9 +34,15 @@ const ANIM_FILES := {
 	"fire": "res://models/anim_fire.fbx",
 	"hit": "res://models/anim_hit.fbx",
 	"death": "res://models/anim_death.fbx",
+	"crouch_idle": "res://models/anim_crouch_idle.fbx",
+	"crouch_fwd": "res://models/anim_crouch_fwd.fbx",
+	"crouch_back": "res://models/anim_crouch_back.fbx",
+	"crouch_left": "res://models/anim_crouch_left.fbx",
 }
-const LOOPING := ["idle", "run", "fire", "walk_fwd", "walk_back", "walk_left", "walk_right"]
-const NO_ROOT_MOTION := ["idle", "run", "fire", "walk_fwd", "walk_back", "walk_left", "walk_right", "hit"]
+const LOOPING := ["idle", "run", "fire", "walk_fwd", "walk_back", "walk_left", "walk_right",
+		"crouch_idle", "crouch_fwd", "crouch_back", "crouch_left"]
+const NO_ROOT_MOTION := ["idle", "run", "fire", "walk_fwd", "walk_back", "walk_left", "walk_right", "hit",
+		"crouch_idle", "crouch_fwd", "crouch_back", "crouch_left"]
 const UPPER_BODY := ["Spine", "Neck", "Head", "Shoulder", "Arm", "Hand"]
 
 @export var walk_speed := 2.8
@@ -60,6 +66,14 @@ var display_only := false
 var character := "trooper"
 ## Seated without the weapon raised (resting by the fire).
 var seat_relaxed := false
+## Crouched (C toggles): slower and quieter; sleeping drones don't hear you.
+var crouched := false
+var _crouch_amount := 0.0
+const CROUCH_SPEED_MULT := 0.5
+## Fires when you crouch or stand (for tutorials).
+signal crouch_changed(on: bool)
+## Every shot you fire (sleeping drones hear it).
+signal shot_fired
 ## Editor-only free camera (F3): orbit round the character without it turning.
 var free_cam := false
 var _free_yaw := 0.0
@@ -103,6 +117,7 @@ var _step_t := 0.0
 var _bob_t := 0.0
 var _facing_yaw := 0.0
 var _want_jump := false
+var _has_crouch := false
 
 ## Seated mode (being dragged): can't move or turn round; aims and shoots
 ## within an arc, legs out in front. Position is set from outside.
@@ -389,6 +404,28 @@ func _build_tree(inst: Node3D, skel_path: String) -> void:
 			loco.add_blend_point(node, points[n])
 	bt.add_node("loco", loco)
 
+	# Crouched locomotion; strafing right plays the left strafe backwards.
+	var crouch := AnimationNodeBlendSpace2D.new()
+	crouch.min_space = Vector2(-1.5, -1.5)
+	crouch.max_space = Vector2(1.5, 1.5)
+	var cpoints := [["crouch_idle", Vector2.ZERO, false], ["crouch_fwd", Vector2(0, 1), false],
+			["crouch_back", Vector2(0, -1), false], ["crouch_left", Vector2(-1, 0), false],
+			["crouch_left", Vector2(1, 0), true]]
+	_has_crouch = anim.has_animation("crouch_idle")
+	if _has_crouch:
+		for cp in cpoints:
+			if anim.has_animation(cp[0]):
+				var cn := AnimationNodeAnimation.new()
+				cn.animation = cp[0]
+				if cp[2]:
+					cn.play_mode = AnimationNodeAnimation.PLAY_MODE_BACKWARD
+				crouch.add_blend_point(cn, cp[1])
+		bt.add_node("crouch", crouch)
+		var cmix := AnimationNodeBlend2.new()
+		bt.add_node("crouch_mix", cmix)
+		bt.connect_node("crouch_mix", 0, "loco")
+		bt.connect_node("crouch_mix", 1, "crouch")
+
 	var fire := AnimationNodeAnimation.new()
 	fire.animation = _anim_or_idle("fire")
 	bt.add_node("fire", fire)
@@ -409,7 +446,7 @@ func _build_tree(inst: Node3D, skel_path: String) -> void:
 	shot.fadeout_time = 0.25
 	bt.add_node("hit_shot", shot)
 
-	bt.connect_node("aim_blend", 0, "loco")
+	bt.connect_node("aim_blend", 0, "crouch_mix" if _has_crouch else "loco")
 	bt.connect_node("aim_blend", 1, "fire")
 	bt.connect_node("hit_shot", 0, "aim_blend")
 	bt.connect_node("hit_shot", 1, "hit")
@@ -424,6 +461,18 @@ func _build_tree(inst: Node3D, skel_path: String) -> void:
 		var b := _find_bone(n)
 		if b >= 0:
 			_spine_bones.append(b)
+
+
+func set_crouched(on: bool) -> void:
+	if on == crouched:
+		return
+	crouched = on
+	crouch_changed.emit(on)
+
+
+## True when you're crouched and moving slowly enough to stay quiet.
+func is_sneaking() -> bool:
+	return crouched and _crouch_amount > 0.6
 
 
 func _find_bone(suffix: String) -> int:
@@ -575,7 +624,13 @@ func _unhandled_input(event) -> void:
 					_free_yaw = _facing_yaw
 					GS.toast("Free camera ON  (mouse orbits, wheel zooms, F3 to exit)" if free_cam else "Free camera OFF")
 			KEY_SPACE:
-				_want_jump = true
+				if crouched:
+					set_crouched(false)   # stand up first
+				else:
+					_want_jump = true
+			KEY_C:
+				if input_enabled and not seated and not sleeping and not pinned and not is_dead:
+					set_crouched(not crouched)
 			KEY_R:
 				_start_reload()
 			KEY_Q:
@@ -788,6 +843,7 @@ func _process(delta: float) -> void:
 		if _reload_t <= 0.0:
 			_finish_reload()
 	_seat_amount = move_toward(_seat_amount, 1.0 if seated else 0.0, delta * 2.5)
+	_crouch_amount = move_toward(_crouch_amount, 1.0 if crouched else 0.0, delta * 5.0)
 	if _rigged and tree != null and tree.active:
 		tree.advance(delta)
 		_twist_spine()
@@ -801,7 +857,7 @@ func _process(delta: float) -> void:
 		gun.visible = _sleep_amount < 0.4
 	if cam_yaw != null:
 		# Seated: camera up over her shoulder, looking down past you.
-		cam_yaw.position.y = 1.55 + (-0.45 if pinned else 0.45) * _seat_amount
+		cam_yaw.position.y = 1.55 + (-0.45 if pinned else 0.45) * _seat_amount - 0.5 * _crouch_amount
 	_update_gun()
 
 
@@ -894,7 +950,11 @@ func _physics_process(delta: float) -> void:
 	# Sprint only forwards and not while shooting or aiming.
 	var sprinting := input_enabled and Input.is_physical_key_pressed(KEY_SHIFT) and input.y < -0.5 \
 			and not shooting and not aiming
+	if sprinting and crouched:
+		set_crouched(false)   # sprinting stands you up
 	var speed := sprint_speed if sprinting else walk_speed
+	if crouched:
+		speed = walk_speed * CROUCH_SPEED_MULT
 	if aiming:
 		speed *= 0.75
 	var accel := 12.0 if is_on_floor() else 3.0
@@ -949,7 +1009,7 @@ func _physics_process(delta: float) -> void:
 	camera.fov = lerpf(camera.fov, 55.0 if aiming else 70.0, clampf(10.0 * delta, 0.0, 1.0))
 
 	if _rigged:
-		_update_anim(delta, shooting or aiming)
+		_update_anim(delta, shooting or aiming or crouched)
 	else:
 		_animate_fake(delta)
 
@@ -1050,13 +1110,18 @@ func _update_anim(delta: float, weapon_up: bool) -> void:
 	# Movement relative to where the trooper faces (model faces -Z).
 	var local := model.global_transform.basis.inverse() * Vector3(velocity.x, 0.0, velocity.z)
 	var target := Vector2(local.x, -local.z) / walk_speed
-	if target.y > 1.0:
+	if crouched:
+		target = Vector2(local.x, -local.z) / (walk_speed * CROUCH_SPEED_MULT)
+	elif target.y > 1.0:
 		# Between walk (1) and run (2) as speed rises towards sprint speed.
 		target.y = 1.0 + clampf((-local.z - walk_speed) / (sprint_speed - walk_speed), 0.0, 1.0)
 	if not is_on_floor():
 		target *= 0.3
 	_blend_pos = _blend_pos.lerp(target, clampf(10.0 * delta, 0.0, 1.0))
 	tree.set("parameters/loco/blend_position", _blend_pos)
+	if _has_crouch:
+		tree.set("parameters/crouch/blend_position", _blend_pos.limit_length(1.0))
+		tree.set("parameters/crouch_mix/blend_amount", _crouch_amount)
 	_aim_amount = lerpf(_aim_amount, 1.0 if weapon_up else 0.0, clampf(12.0 * delta, 0.0, 1.0))
 	tree.set("parameters/aim_blend/blend_amount", _aim_amount)
 
@@ -1120,6 +1185,7 @@ func _shoot() -> void:
 		Sfx.ui("ui_click", -4.0)
 		_fire_cd = 0.35
 		return
+	shot_fired.emit()
 	if ammo > 0:
 		ammo -= 1
 		ammo_changed.emit(ammo)
@@ -1160,7 +1226,8 @@ func _shoot() -> void:
 	var bolt := BoltScript.new()
 	get_parent().add_child(bolt)
 	bolt.launch(muzzle.global_position, target_point, not hit.is_empty())
-	Sfx.ui("blaster", -9.0, 0.06)
+	# The pistol has its own snappier shot.
+	Sfx.ui("pistol_shot" if weapon == "sidearm" else "blaster", -9.0, 0.06)
 
 	muzzle_light.light_energy = 6.0
 	cam_pitch.rotation.x = minf(cam_pitch.rotation.x + 0.006, deg_to_rad(45.0))
@@ -1239,8 +1306,40 @@ func heal(amount: float) -> void:
 	health_changed.emit(health, max_health)
 
 
+## Dies outright: no evade, block or last stand (e.g. the sentry drone).
+func kill() -> void:
+	if is_dead:
+		return
+	health = 0.0
+	health_changed.emit(health, max_health)
+	_die()
+
+
+## Back on your feet at `pos` with full health (checkpoint respawn).
+func revive(pos: Vector3, yaw: float) -> void:
+	is_dead = false
+	set_crouched(false)
+	_crouch_amount = 0.0
+	velocity = Vector3.ZERO
+	global_position = pos
+	health = max_health
+	health_changed.emit(health, max_health)
+	_invuln_t = 2.0
+	_facing_yaw = yaw
+	model.rotation.y = yaw
+	if cam_yaw != null:
+		cam_yaw.rotation.y = yaw
+	visual.rotation.x = 0.0
+	if _rigged:
+		anim.stop()
+		tree.active = true
+	torso_yaw = 0.0
+	torso_pitch = 0.0
+
+
 func _die() -> void:
 	is_dead = true
+	set_crouched(false)
 	died.emit()
 	if _rigged and anim.has_animation("death"):
 		tree.active = false

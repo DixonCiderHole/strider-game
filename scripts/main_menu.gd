@@ -255,6 +255,14 @@ func _unhandled_input(event) -> void:
 		GS.wake_at_camp = true
 		get_tree().change_scene_to_file("res://base.tscn")
 		return
+	# Testing (editor only): F6 starts a brand-new game in save slot 5 on the
+	# trail to the beacon, with the controls tutorial.
+	if OS.has_feature("editor") and event is InputEventKey and event.pressed and not event.echo and event.physical_keycode == KEY_F6:
+		GS.horde_mode = false
+		GS.use_slot(5)
+		GS.reset()
+		get_tree().change_scene_to_file("res://path.tscn")
+		return
 	# Testing: F2 cycles the night backdrop through every area.
 	if event is InputEventKey and event.pressed and not event.echo and event.physical_keycode == KEY_F2:
 		var areas := ["res://main.tscn", "res://path.tscn", "res://pinned.tscn", "res://drag.tscn", "res://base.tscn"]
