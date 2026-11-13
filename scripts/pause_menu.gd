@@ -318,6 +318,8 @@ func _build_inventory(page: Control) -> void:
 	_viewer.add_child(we)
 	var preview = PlayerScript.new()
 	preview.display_only = true
+	if GS.active_member == "survivor":
+		preview.character = "survivor"   # show whoever you're playing
 	_preview = preview
 	_viewer.add_child(preview)
 	preview.model.rotation.y = deg_to_rad(165)
@@ -567,10 +569,17 @@ func _portrait(id: String) -> Control:
 			var t = PlayerScript.new()
 			t.display_only = true
 			# Hold whatever weapon you have out right now.
-			t.weapon = player.weapon if player != null and is_instance_valid(player) else "primary"
+			t.weapon = player.weapon if GS.active_member == "trooper" and player != null and is_instance_valid(player) else "primary"
 			face.add_child(t)
 		"survivor":
-			face.add_child(AllyScript.new())
+			if GS.active_member == "survivor":
+				# You're playing her: show her playable model, rifle in hand.
+				var su = PlayerScript.new()
+				su.display_only = true
+				su.character = "survivor"
+				face.add_child(su)
+			else:
+				face.add_child(AllyScript.new())
 		"droid":
 			var d = CompanionScript.new()
 			d.display_only = true
@@ -682,12 +691,28 @@ func _refresh_party() -> void:
 	var scene := get_tree().current_scene
 	var hp: float = player.health if player != null else GS.player_max_health()
 	var hp_max: float = player.max_health if player != null else GS.player_max_health()
-	_party_box.add_child(_member_column("trooper", "TROOPER", "You  ·  Rifleman", GS.player_level, GS.xp, hp, hp_max, [
-		["WEAPON", player.weapon_name() if player != null else "Blaster Rifle"],
-		["DAMAGE / BOLT", str(int(GS.player_damage()))],
-		["SKILL POINTS", str(GS.skill_points)],
-	]))
-	if GS.ally_joined:
+	if GS.active_member == "survivor":
+		# Playing as her while he recovers: she's "You", he's laid up at camp.
+		_party_box.add_child(_member_column("survivor", "SURVIVOR", "You  ·  Marksman", GS.player_level, GS.xp, hp, hp_max, [
+			["WEAPON", "Long Rifle"],
+			["DAMAGE / BOLT", str(int(GS.player_damage()))],
+			["SKILL POINTS", str(GS.skill_points)],
+		]))
+		var pt: Dictionary = GS.profiles.get("trooper", {})
+		var t_hp := GS.player_max_health()
+		_party_box.add_child(_member_column("trooper", "TROOPER", "Injured  ·  Rifleman", int(pt.get("player_level", 1)), int(pt.get("xp", 0)),
+				t_hp * 0.15, t_hp, [
+			["WEAPON", "Blaster Rifle"],
+			["STATUS", "Resting at camp"],
+			["SKILL POINTS", str(int(pt.get("skill_points", 0)))],
+		]))
+	else:
+		_party_box.add_child(_member_column("trooper", "TROOPER", "You  ·  Rifleman", GS.player_level, GS.xp, hp, hp_max, [
+			["WEAPON", player.weapon_name() if player != null else "Blaster Rifle"],
+			["DAMAGE / BOLT", str(int(GS.player_damage()))],
+			["SKILL POINTS", str(GS.skill_points)],
+		]))
+	if GS.ally_joined and GS.active_member == "trooper":
 		var a = scene.get_node_or_null("Ally") if scene != null else null
 		var sa := GS.party_stats("survivor")
 		_party_box.add_child(_member_column("survivor", "SURVIVOR", "Ally  ·  Marksman", int(sa["level"]), int(sa["xp"]),

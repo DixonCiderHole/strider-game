@@ -64,7 +64,11 @@ static var party := {}
 ## Placed storage crates: Array of {"area", "type", "pos": Vector3, "yaw", "items": Array (null or {"id","n"})}.
 static var storage: Array = []
 ## Which party member you are playing as (highlighted on the PARTY screen).
-static var active_member := "trooper"
+static var active_member := "trooper"   # who you're playing: "trooper" or "survivor"
+## Progress of the members you're NOT currently playing (each character has
+## their own level, XP, skills, attributes, backpack and gear). The active
+## member's progress lives in the usual vars below.
+static var profiles := {}
 static var _loaded := false
 static var slot := 0   # 0 = not picked yet (uses the last one played)
 
@@ -123,6 +127,8 @@ static func ensure_loaded() -> void:
 	bench_level = cf.get_value("rpg", "bench_level", 0)
 	quest_stage = cf.get_value("rpg", "quest_stage", 0)
 	flags = cf.get_value("rpg", "flags", {})
+	active_member = cf.get_value("party", "active_member", "trooper")
+	profiles = cf.get_value("party", "profiles", {})
 	_fix_backpack()
 	if not cf.has_section("rpg"):
 		_starting_kit()
@@ -168,6 +174,8 @@ static func _clear() -> void:
 	bench_level = 0
 	quest_stage = 0
 	flags = {}
+	active_member = "trooper"
+	profiles = {}
 
 
 static func save() -> void:
@@ -194,6 +202,10 @@ static func save() -> void:
 	cf.set_value("rpg", "bench_level", bench_level)
 	cf.set_value("rpg", "quest_stage", quest_stage)
 	cf.set_value("rpg", "flags", flags)
+	cf.set_value("party", "active_member", active_member)
+	cf.set_value("party", "profiles", profiles)
+	if active_member == "survivor":
+		party_stats("survivor")["level"] = player_level
 	cf.set_value("meta", "saved_at", int(Time.get_unix_time_from_system()))
 	cf.save(save_path())
 
@@ -336,6 +348,51 @@ static func _fix_backpack() -> void:
 	for k in ["primary", "sidearm", "utility1", "utility2", "module1", "module2", "module3"]:
 		if not equipment.has(k):
 			equipment[k] = ""
+
+
+## Switches who you're playing. Stores the current character's progress and
+## loads the other's (a fresh one the first time: the survivor starts at her
+## party level with a rifle and a medic's kit).
+static func switch_member(id: String) -> void:
+	ensure_loaded()
+	if id == active_member:
+		return
+	profiles[active_member] = {
+		"backpack": backpack.duplicate(true), "equipment": equipment.duplicate(true), "mag": mag,
+		"player_level": player_level, "xp": xp, "skill_points": skill_points, "skills": skills.duplicate(true),
+		"attr_points": attr_points, "attributes": attributes.duplicate(true),
+	}
+	if profiles.has(id):
+		var p: Dictionary = profiles[id]
+		backpack = (p.get("backpack", []) as Array).duplicate(true)
+		equipment = (p.get("equipment", {}) as Dictionary).duplicate(true)
+		mag = int(p.get("mag", MAG_SIZE))
+		player_level = int(p.get("player_level", 1))
+		xp = int(p.get("xp", 0))
+		skill_points = int(p.get("skill_points", 0))
+		skills = (p.get("skills", {}) as Dictionary).duplicate(true)
+		attr_points = int(p.get("attr_points", 0))
+		attributes = (p.get("attributes", {}) as Dictionary).duplicate(true)
+		profiles.erase(id)
+	else:
+		var lv := maxi(1, int(party_stats(id).get("level", 1)))
+		backpack = []
+		equipment = {"primary": "rifle", "sidearm": "", "utility1": "", "utility2": "", "module1": "", "module2": "", "module3": ""}
+		mag = MAG_SIZE
+		player_level = lv
+		xp = 0
+		skill_points = lv - 1
+		skills = {}
+		attr_points = Items.ATTR_PER_LEVEL * (lv - 1)
+		attributes = {}
+		_fix_backpack()
+		add_item("cartridge", 3, false)
+		add_item("bandage", 4, false)
+		add_item("ration", 2, false)
+	active_member = id
+	_fix_backpack()
+	changed()
+	save()
 
 
 static func _starting_kit() -> void:

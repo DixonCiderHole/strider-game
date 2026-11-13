@@ -79,6 +79,8 @@ func _ready() -> void:
 	player = PlayerScript.new()
 	player.name = "Player"
 	GS.ensure_loaded()
+	if GS.active_member == "survivor":
+		player.character = "survivor"   # playing as her while he recovers at camp
 	player.damage = GS.player_damage()
 	player.max_health = GS.player_max_health()
 	player.health = player.max_health

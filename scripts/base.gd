@@ -121,10 +121,20 @@ func _ready() -> void:
 		return
 	GS.reached_base = true
 	GS.horde_mode = false
+	# First arrival from the story (new games): he's too badly hurt to move, so
+	# you play as her while he rests. Saves already past this point never get
+	# here (wake_at_camp is only set by the drag rescue), so they're unchanged.
+	if GS.wake_at_camp:
+		GS.wake_at_camp = false
+		_first_arrival = true
+		_start_survivor_section()
 	GS.enter_area("res://base.tscn")
+	var as_her := _survivor_section()
 
 	player = PlayerScript.new()
 	player.name = "Player"
+	if as_her:
+		player.character = "survivor"
 	player.damage = GS.player_damage()
 	player.max_health = GS.player_max_health()
 	player.health = player.max_health
@@ -143,20 +153,11 @@ func _ready() -> void:
 	add_child(menu)
 
 	# She sits by the fire, across from the beds, until you've talked.
-	ally = AllyScript.new()
-	ally.name = "Ally"
-	var seat := FIRE_POS + Vector3(1.1, 0.0, 1.45)
-	if GS.ally_joined:
-		ally.position = player.position + Vector3(2.0, 0.0, 1.0)
-		add_child(ally)
-		ally.follow(player)
+	# (Held back while you're playing as her; it all happens once he's up.)
+	if as_her:
+		_build_injured_trooper()
 	else:
-		ally.mode = "sit"
-		ally.position = seat + Vector3(0.0, _ground(seat), 0.0)
-		var to_fire := FIRE_POS - seat
-		ally.rotation.y = atan2(-to_fire.x, -to_fire.z)
-		add_child(ally)
-		_talk_node = _add_interact(ally.position, "Talk to her", _start_talk)
+		_build_ally()
 
 	_build_ui()
 	overlay = OverlayScript.new()
@@ -180,11 +181,102 @@ func _ready() -> void:
 	_build_resources()
 	_build_pod_wreck()
 	Sfx.loop(self, "forest_loop", -16.0, 6.0, false)
-	if GS.wake_at_camp:
-		GS.wake_at_camp = false
-		_wake_up()
+	if _first_arrival:
+		_her_first_morning()
+	elif as_her:
+		_show_banner("BASE CAMP\nHe's still out cold on the cot. Keep the camp going.", 4.5)
 	else:
 		_show_banner("BASE CAMP\nA dry cave in the cliffs, fitted out as a shelter.\nCheck the stations inside.", 5.0)
+
+
+# ---------------------------------------------------------------- her section
+
+var _first_arrival := false
+
+
+## True while you're playing the survivor at camp (he's resting).
+func _survivor_section() -> bool:
+	return GS.flags.get("survivor_section", false) and GS.active_member == "survivor"
+
+
+func _start_survivor_section() -> void:
+	GS.flags["survivor_section"] = true
+	# "A Familiar Face" (talking to her by the fire) waits until he's up.
+	if GS.quest_stage == 0:
+		GS.quest_stage = 1
+		GS.flags["familiar_face_deferred"] = true
+	GS.switch_member("survivor")
+
+
+func _build_ally() -> void:
+	ally = AllyScript.new()
+	ally.name = "Ally"
+	var seat := FIRE_POS + Vector3(1.1, 0.0, 1.45)
+	if GS.ally_joined:
+		ally.position = player.position + Vector3(2.0, 0.0, 1.0)
+		add_child(ally)
+		ally.follow(player)
+	else:
+		ally.mode = "sit"
+		ally.position = seat + Vector3(0.0, _ground(seat), 0.0)
+		var to_fire := FIRE_POS - seat
+		ally.rotation.y = atan2(-to_fire.x, -to_fire.z)
+		add_child(ally)
+		_talk_node = _add_interact(ally.position, "Talk to her", _start_talk)
+
+
+
+## He lies on the left cot, out cold. Using him just says to let him rest.
+func _build_injured_trooper() -> void:
+	var bed := BED_L
+	var yaw := PI + deg_to_rad(4.0)
+	var axis := Vector3(sin(yaw), 0.0, cos(yaw))
+	var feet := bed - axis * 0.85
+	var him = PlayerScript.new()
+	him.name = "InjuredTrooper"
+	him.display_only = true
+	him.sleeping = true
+	him._sleep_amount = 1.0
+	him._facing_yaw = yaw
+	him.position = feet + Vector3(0.0, _ground(bed) + 0.6, 0.0)
+	add_child(him)
+	him.remove_from_group("player")   # he's scenery for now, not the player
+	him.model.rotation.y = yaw
+	_add_interact(bed + Vector3(0.0, _ground(bed) + 0.7, 0.0), "Check on him",
+			func(): _show_banner("He's severely injured.\nBest to let him rest for now.", 3.0))
+
+
+## Your first morning at camp, as her: sat by the fire, then up.
+func _her_first_morning() -> void:
+	# On the cave side of the fire, looking out of the mouth.
+	var seat := FIRE_POS + Vector3(0.6, 0.0, -1.6)
+	var to_fire := FIRE_POS - seat
+	var yaw := atan2(-to_fire.x, -to_fire.z)
+	player.position = seat + Vector3(0.0, _ground(seat) + 0.1, 0.0)
+	player.seat_relaxed = true
+	player.seated = true
+	player._seat_amount = 1.0
+	player.input_enabled = false
+	player._facing_yaw = yaw
+	player.model.rotation.y = yaw
+	player.cam_yaw.rotation.y = yaw + PI * 0.15
+	droid.position = seat + Vector3(-1.6, _ground(seat) + 0.5, -0.6)
+	_show_banner("You've kept watch by the fire all night.\nHe's alive, but only just. He needs rest, and the camp needs supplies.\n\nPress any key to get up", 600.0)
+	await get_tree().create_timer(1.5).timeout
+	_waiting_her_up = true
+
+
+var _waiting_her_up := false
+
+
+func _her_get_up() -> void:
+	_waiting_her_up = false
+	_hide_banner()
+	player.seated = false
+	player.seat_relaxed = false
+	await get_tree().create_timer(1.0).timeout
+	player.input_enabled = true
+	_show_banner("BASE CAMP\nLet him rest. Gather what the camp needs.", 4.0)
 
 
 ## Arriving from the story: you come to on a cot by the fire.
@@ -230,6 +322,11 @@ func _process(delta: float) -> void:
 
 
 func _input(event) -> void:
+	if _waiting_her_up:
+		if (event is InputEventKey and event.pressed and not event.echo) or (event is InputEventMouseButton and event.pressed):
+			get_viewport().set_input_as_handled()
+			_her_get_up()
+		return
 	if _waiting_get_up:
 		if (event is InputEventKey and event.pressed and not event.echo) or (event is InputEventMouseButton and event.pressed):
 			get_viewport().set_input_as_handled()

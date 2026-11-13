@@ -246,6 +246,15 @@ func _unhandled_input(event) -> void:
 	if event is InputEventKey and event.pressed and not event.echo and event.physical_keycode == KEY_ESCAPE:
 		if _settings.visible or _controls.visible or _saves.visible:
 			_show(null)
+	# Testing (editor only): F4 starts a brand-new game in save slot 5 and jumps
+	# straight to the first arrival at camp, as if you'd just been rescued.
+	if OS.has_feature("editor") and event is InputEventKey and event.pressed and not event.echo and event.physical_keycode == KEY_F4:
+		GS.horde_mode = false
+		GS.use_slot(5)
+		GS.reset()
+		GS.wake_at_camp = true
+		get_tree().change_scene_to_file("res://base.tscn")
+		return
 	# Testing: F2 cycles the night backdrop through every area.
 	if event is InputEventKey and event.pressed and not event.echo and event.physical_keycode == KEY_F2:
 		var areas := ["res://main.tscn", "res://path.tscn", "res://pinned.tscn", "res://drag.tscn", "res://base.tscn"]

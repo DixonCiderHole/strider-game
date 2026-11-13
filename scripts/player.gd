@@ -13,7 +13,17 @@ const GS = preload("res://scripts/game_state.gd")
 
 const CHARACTER_PATH := "res://models/maincharacter.glb"   # textured, unrigged
 const RIGGED_PATH := "res://models/trooper_rigged.fbx"      # Mixamo skeleton + idle
+## The survivor as a playable character (Mixamo rig, same bone names as the
+## trooper, so every animation above plays on her too).
+const SURVIVOR_RIG := "res://models/female_mixamo.fbx"
 const BLASTER_PATH := "res://models/blaster.glb"
+## Her own rifle (the one slung on her back as a companion).
+const SURVIVOR_RIFLE := "res://models/ally_rifle.glb"
+## Fitted onto the blaster's grip points: 1.58x puts it at her original 0.95 m,
+## and the offset lines her pistol grip (model x 0.4) up with the hand.
+const SURVIVOR_RIFLE_SCALE := 1.58
+const SURVIVOR_RIFLE_OFFSET := Vector3(0.218, 0.222, 0.0)
+const SURVIVOR_RIFLE_MUZZLE := Vector3(-1.28, 0.38, 0.0)
 const PistolModel = preload("res://scripts/pistol_model.gd")
 const ANIM_FILES := {
 	"run": "res://models/anim_run.fbx",
@@ -46,6 +56,13 @@ var is_dead := false
 var input_enabled := true
 ## Menu showcase mode: just the animated model, no camera or controls.
 var display_only := false
+## Who this is: "trooper" (default) or "survivor". Set before add_child.
+var character := "trooper"
+## Seated without the weapon raised (resting by the fire).
+var seat_relaxed := false
+## Editor-only free camera (F3): orbit round the character without it turning.
+var free_cam := false
+var _free_yaw := 0.0
 
 var gravity: float = ProjectSettings.get_setting("physics/3d/default_gravity")
 
@@ -170,7 +187,8 @@ func _load_character() -> void:
 	var holder := Node3D.new()
 	holder.rotation.y = deg_to_rad(model_yaw_offset_deg)
 	visual.add_child(holder)
-	if ResourceLoader.exists(RIGGED_PATH) and _load_rigged(holder):
+	var rig := SURVIVOR_RIG if character == "survivor" else RIGGED_PATH
+	if ResourceLoader.exists(rig) and _load_rigged(holder, rig):
 		return
 	if ResourceLoader.exists(CHARACTER_PATH):
 		var inst: Node3D = load(CHARACTER_PATH).instantiate()
@@ -187,8 +205,8 @@ func _load_character() -> void:
 		holder.add_child(mi)
 
 
-func _load_rigged(holder: Node3D) -> bool:
-	var inst: Node3D = load(RIGGED_PATH).instantiate()
+func _load_rigged(holder: Node3D, rig_path := RIGGED_PATH) -> bool:
+	var inst: Node3D = load(rig_path).instantiate()
 	holder.add_child(inst)
 	var skels := inst.find_children("*", "Skeleton3D", true, false)
 	if skels.is_empty():
@@ -201,14 +219,35 @@ func _load_rigged(holder: Node3D) -> bool:
 	if h > 0.01 and (h > 4.0 or h < 0.8):
 		inst.scale = Vector3.ONE * (1.85 / h)
 
-	_apply_original_textures(inst)
+	if character == "trooper":
+		_apply_original_textures(inst)
+	else:
+		# Make sure her skinned mesh follows the skeleton the animations drive.
+		for mi in inst.find_children("*", "MeshInstance3D", true, false):
+			if (mi as MeshInstance3D).skin != null:
+				mi.skeleton = mi.get_path_to(skeleton)
+		skeleton.show_rest_only = false
 
 	anim = AnimationPlayer.new()
 	anim.name = "TrooperAnims"
 	inst.add_child(anim)   # root_node ".." -> inst
 	var skel_path := String(inst.get_path_to(skeleton))
 	var lib := AnimationLibrary.new()
-	_add_anim(lib, "idle", inst, skel_path)
+	# His rig file carries his idle. Hers only carries a one-frame T-pose, so
+	# she borrows his idle instead (same Mixamo bone names).
+	if rig_path == RIGGED_PATH:
+		_add_anim(lib, "idle", inst, skel_path)
+	elif ResourceLoader.exists(RIGGED_PATH):
+		var idle_src: Node = load(RIGGED_PATH).instantiate()
+		_add_anim(lib, "idle", idle_src, skel_path)
+		idle_src.free()
+		# His file stores hip height in other units; standing still, her own
+		# rest hip height is right, so keep only the rotations.
+		if lib.has_animation("idle"):
+			var ia := lib.get_animation("idle")
+			for t in range(ia.get_track_count() - 1, -1, -1):
+				if ia.track_get_type(t) == Animation.TYPE_POSITION_3D:
+					ia.remove_track(t)
 	for anim_name in ANIM_FILES:
 		var path: String = ANIM_FILES[anim_name]
 		if not ResourceLoader.exists(path):
@@ -273,6 +312,11 @@ func _fit_to_body(a: Animation) -> void:
 			var first_h := (a.track_get_key_value(t, 0) as Vector3).length()
 			if rest_h > 0.0001 and first_h > 0.0001:
 				ratio = rest_h / first_h
+			# Her body only: the clips were made for his hip height, so scale
+			# them to hers (his own keys stay exactly as animated, below).
+			if character == "survivor" and absf(ratio - 1.0) > 0.001:
+				for k in a.track_get_key_count(t):
+					a.track_set_key_value(t, k, (a.track_get_key_value(t, k) as Vector3) * ratio)
 			# The hips keys are left exactly as animated. Rescaling them here
 			# (added Monday evening) dropped him about a metre into the ground.
 
@@ -426,6 +470,8 @@ const GUN_GRIP := Vector3(0.85, -0.22, 0.0)     # middle of the pistol grip
 const GUN_FOREGRIP := Vector3(-0.2, -0.07, 0.0) # underside, where the left hand holds
 const GUN_MUZZLE := Vector3(-0.95, 0.22, 0.0)
 
+var _rifle_muzzle := GUN_MUZZLE
+
 func _load_blaster() -> void:
 	gun = Node3D.new()
 	gun.name = "Blaster"
@@ -433,7 +479,12 @@ func _load_blaster() -> void:
 	add_child(gun)
 	_rifle_model = Node3D.new()
 	gun.add_child(_rifle_model)
-	if ResourceLoader.exists(BLASTER_PATH):
+	if character == "survivor" and ResourceLoader.exists(SURVIVOR_RIFLE):
+		_rifle_model.add_child(load(SURVIVOR_RIFLE).instantiate())
+		_rifle_model.scale = Vector3.ONE * SURVIVOR_RIFLE_SCALE
+		_rifle_model.position = SURVIVOR_RIFLE_OFFSET
+		_rifle_muzzle = SURVIVOR_RIFLE_MUZZLE
+	elif ResourceLoader.exists(BLASTER_PATH):
 		_rifle_model.add_child(load(BLASTER_PATH).instantiate())
 	else:
 		var mi := MeshInstance3D.new()
@@ -447,7 +498,7 @@ func _load_blaster() -> void:
 	_pistol_model.visible = false
 	gun.add_child(_pistol_model)
 	muzzle = Node3D.new()
-	muzzle.position = GUN_MUZZLE
+	muzzle.position = _rifle_muzzle
 	gun.add_child(muzzle)
 	muzzle_light = OmniLight3D.new()
 	muzzle_light.light_color = Color(1.0, 0.25, 0.2)
@@ -514,8 +565,15 @@ func _unhandled_input(event) -> void:
 				deg_to_rad(-60.0), deg_to_rad(45.0))
 	elif event is InputEventMouseButton and event.pressed and Input.mouse_mode != Input.MOUSE_MODE_CAPTURED:
 		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+	elif free_cam and event is InputEventMouseButton and event.pressed and event.button_index in [MOUSE_BUTTON_WHEEL_UP, MOUSE_BUTTON_WHEEL_DOWN]:
+		spring.spring_length = clampf(spring.spring_length + (-0.4 if event.button_index == MOUSE_BUTTON_WHEEL_UP else 0.4), 1.2, 9.0)
 	elif event is InputEventKey and event.pressed and not event.echo:
 		match event.physical_keycode:
+			KEY_F3:
+				if OS.has_feature("editor"):
+					free_cam = not free_cam
+					_free_yaw = _facing_yaw
+					GS.toast("Free camera ON  (mouse orbits, wheel zooms, F3 to exit)" if free_cam else "Free camera OFF")
 			KEY_SPACE:
 				_want_jump = true
 			KEY_R:
@@ -594,7 +652,7 @@ func _show_weapon_model() -> void:
 	var pistol := weapon == "sidearm"
 	_rifle_model.visible = not pistol
 	_pistol_model.visible = pistol
-	muzzle.position = PistolModel.MUZZLE if pistol else GUN_MUZZLE
+	muzzle.position = PistolModel.MUZZLE if pistol else _rifle_muzzle
 	Sfx.ui("ui_click", -6.0)
 
 
@@ -827,7 +885,9 @@ func _physics_process(delta: float) -> void:
 			input.x += 1.0
 	input = input.normalized()
 
-	var dir := Basis(Vector3.UP, cam_yaw.rotation.y) * Vector3(input.x, 0.0, input.y)
+	# Free camera: steer relative to the body, not the camera.
+	var ctrl_yaw: float = _free_yaw if free_cam else cam_yaw.rotation.y
+	var dir := Basis(Vector3.UP, ctrl_yaw) * Vector3(input.x, 0.0, input.y)
 	var captured := input_enabled and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED
 	var shooting := captured and Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT)
 	var aiming := captured and Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT)
@@ -864,27 +924,28 @@ func _physics_process(delta: float) -> void:
 	# Moving: the whole body faces the camera direction.
 	# Standing: the feet stay put and the torso twists to follow the aim;
 	# past ~70 degrees the feet turn to catch up.
-	var twist := wrapf(cam_yaw.rotation.y - _facing_yaw, -PI, PI)
+	var twist := wrapf(ctrl_yaw - _facing_yaw, -PI, PI)
 	var moving := Vector2(velocity.x, velocity.z).length() > 0.4
 	if moving:
 		_turning = false
-		_facing_yaw = lerp_angle(_facing_yaw, cam_yaw.rotation.y, clampf(12.0 * delta, 0.0, 1.0))
+		_facing_yaw = lerp_angle(_facing_yaw, ctrl_yaw, clampf(12.0 * delta, 0.0, 1.0))
 	else:
 		if absf(twist) > deg_to_rad(70.0):
 			_turning = true
 		if _turning:
-			_facing_yaw = lerp_angle(_facing_yaw, cam_yaw.rotation.y, clampf(7.0 * delta, 0.0, 1.0))
+			_facing_yaw = lerp_angle(_facing_yaw, ctrl_yaw, clampf(7.0 * delta, 0.0, 1.0))
 			if absf(twist) < deg_to_rad(4.0):
 				_turning = false
 	if climbing:
 		_facing_yaw = lerp_angle(_facing_yaw, _climb_yaw, clampf(12.0 * delta, 0.0, 1.0))
 	model.rotation.y = _facing_yaw
-	twist = wrapf(cam_yaw.rotation.y - _facing_yaw, -PI, PI)
+	twist = wrapf(ctrl_yaw - _facing_yaw, -PI, PI)
 	torso_yaw = lerpf(torso_yaw, twist, clampf(20.0 * delta, 0.0, 1.0))
-	torso_pitch = lerpf(torso_pitch, cam_pitch.rotation.x * 0.85, clampf(20.0 * delta, 0.0, 1.0))
+	torso_pitch = lerpf(torso_pitch, 0.0 if free_cam else cam_pitch.rotation.x * 0.85, clampf(20.0 * delta, 0.0, 1.0))
 
-	# Aim zoom.
-	spring.spring_length = lerpf(spring.spring_length, 2.0 if aiming else 3.4, clampf(10.0 * delta, 0.0, 1.0))
+	# Aim zoom (the free camera keeps whatever zoom the wheel set).
+	if not free_cam:
+		spring.spring_length = lerpf(spring.spring_length, 2.0 if aiming else 3.4, clampf(10.0 * delta, 0.0, 1.0))
 	camera.fov = lerpf(camera.fov, 55.0 if aiming else 70.0, clampf(10.0 * delta, 0.0, 1.0))
 
 	if _rigged:
@@ -968,7 +1029,9 @@ func _seated_physics(delta: float) -> void:
 	spring.spring_length = lerpf(spring.spring_length, arm * 0.62 if aiming else arm, clampf(10.0 * delta, 0.0, 1.0))
 	camera.fov = lerpf(camera.fov, 55.0 if aiming else 70.0, clampf(10.0 * delta, 0.0, 1.0))
 	if _rigged:
-		_update_anim(delta, true)
+		_update_anim(delta, not seat_relaxed)
+	if seat_relaxed:
+		return
 	_fire_cd -= delta
 	if shooting and _fire_cd <= 0.0:
 		_fire_cd = fire_interval
@@ -1031,6 +1094,11 @@ func _view_dir() -> Vector3:
 
 func _update_aim_point() -> void:
 	if not camera.global_position.is_finite():
+		return
+	if free_cam:
+		var fwd := -model.global_transform.basis.z
+		_aim_point = global_position + Vector3.UP * 1.4 + fwd * 60.0
+		_has_aim_point = true
 		return
 	var space := get_world_3d().direct_space_state
 	var centre := get_viewport().get_visible_rect().size * 0.5

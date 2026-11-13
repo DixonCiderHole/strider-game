@@ -35,6 +35,8 @@ func available() -> bool:
 		return false
 	if GS.flags.get("story_busy", false) or DialogueBox.is_open(tree):
 		return false
+	if GS.active_member != "trooper":
+		return false   # the banter is written for him; none while you play as her
 	if who == "survivor":
 		if not GS.ally_joined or member == null or member.get("mode") in ["sit", "drag"]:
 			return false
