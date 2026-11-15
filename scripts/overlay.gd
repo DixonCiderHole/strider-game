@@ -36,10 +36,18 @@ var _compass
 ## "objective" group.
 var objective_provider: Callable
 var _current = null
+var _quest_dir: Label
+var _marker: Label
+
+
+## Where the current objective is (Vector3), or null. Used by the pause menu.
+func objective_point():
+	return _objective_point()
 
 
 func _ready() -> void:
 	layer = 5
+	add_to_group("hud_overlay")
 	GS.ensure_loaded()
 	_root = Control.new()
 	_root.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -66,6 +74,20 @@ func _ready() -> void:
 	_quest_goals = UI.label("", 16, UI.MUTED)
 	_quest_goals.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	qbox.add_child(_quest_goals)
+	# Which way, and how far, to the current objective.
+	_quest_dir = UI.label("", 16, Color(1.0, 0.8, 0.25))
+	_quest_dir.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	qbox.add_child(_quest_dir)
+
+	# On-screen objective marker (Settings: Objective marker).
+	_marker = UI.label("◆", 26, Color(1.0, 0.8, 0.25))
+	_marker.add_theme_constant_override("outline_size", 6)
+	_marker.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.85))
+	_marker.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_marker.custom_minimum_size = Vector2(120, 0)
+	_marker.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_marker.visible = false
+	_root.add_child(_marker)
 
 	# Feed
 	_feed = VBoxContainer.new()
@@ -162,6 +184,7 @@ func _process(_delta: float) -> void:
 		return
 	_update_health()
 	_update_compass()
+	_update_objective_marker()
 	# Weapon / ammo
 	_weapon.text = player.weapon_name() + "   ·   " + player.ammo_hint()
 	_ammo.text = player.ammo_text()
@@ -386,6 +409,35 @@ func _objective_point():
 		if n is Node3D and n.is_visible_in_tree():
 			return n.global_position
 	return null
+
+
+func _update_objective_marker() -> void:
+	var o = _objective_point()
+	_marker.visible = false
+	_quest_dir.text = ""
+	if o == null:
+		return
+	var op: Vector3 = o
+	var d: Vector3 = op - player.global_position
+	d.y = 0.0
+	var dist := d.length()
+	if dist > 4.0:
+		var deg := fposmod(rad_to_deg(atan2(d.x, -d.z)), 360.0)
+		var names := ["north", "north-east", "east", "south-east", "south", "south-west", "west", "north-west"]
+		_quest_dir.text = "◆  %d m %s" % [int(dist), names[int(round(deg / 45.0)) % 8]]
+	var cam := get_viewport().get_camera_3d()
+	if not Settings.objective_marker or cam == null or dist < 4.0 or not player.input_enabled:
+		return
+	var at := op + Vector3.UP * 1.4
+	if cam.is_position_behind(at):
+		return
+	var sp := cam.unproject_position(at)
+	var vr := get_viewport().get_visible_rect().size
+	if sp.x < 0 or sp.y < 0 or sp.x > vr.x or sp.y > vr.y:
+		return
+	_marker.text = "◆\n%d m" % int(dist)
+	_marker.position = sp - Vector2(60, 20)
+	_marker.visible = true
 
 
 func _update_compass() -> void:

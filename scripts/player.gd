@@ -606,8 +606,14 @@ func _update_gun() -> void:
 func _unhandled_input(event) -> void:
 	if display_only or not input_enabled:
 		return
+	# Hold-to-crouch: stand when C is let go.
+	if event is InputEventKey and not event.pressed and event.physical_keycode == KEY_C and not Settings.crouch_toggle:
+		set_crouched(false)
+		return
 	if event is InputEventMouseMotion and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
 		var sens: float = Settings.mouse_sensitivity
+		if Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT):
+			sens *= Settings.aim_sensitivity
 		var invert := -1.0 if Settings.invert_y else 1.0
 		cam_yaw.rotation.y -= event.relative.x * sens
 		cam_pitch.rotation.x = clampf(cam_pitch.rotation.x - event.relative.y * sens * invert,
@@ -630,7 +636,7 @@ func _unhandled_input(event) -> void:
 					_want_jump = true
 			KEY_C:
 				if input_enabled and not seated and not sleeping and not pinned and not is_dead:
-					set_crouched(not crouched)
+					set_crouched(not crouched if Settings.crouch_toggle else true)
 			KEY_R:
 				_start_reload()
 			KEY_Q:
@@ -1006,7 +1012,7 @@ func _physics_process(delta: float) -> void:
 	# Aim zoom (the free camera keeps whatever zoom the wheel set).
 	if not free_cam:
 		spring.spring_length = lerpf(spring.spring_length, 2.0 if aiming else 3.4, clampf(10.0 * delta, 0.0, 1.0))
-	camera.fov = lerpf(camera.fov, 55.0 if aiming else 70.0, clampf(10.0 * delta, 0.0, 1.0))
+	camera.fov = lerpf(camera.fov, Settings.fov - 15.0 if aiming else Settings.fov, clampf(10.0 * delta, 0.0, 1.0))
 
 	if _rigged:
 		_update_anim(delta, shooting or aiming or crouched)
@@ -1087,7 +1093,7 @@ func _seated_physics(delta: float) -> void:
 	_update_aim_point()
 	var arm := 0.7 if pinned else 2.3
 	spring.spring_length = lerpf(spring.spring_length, arm * 0.62 if aiming else arm, clampf(10.0 * delta, 0.0, 1.0))
-	camera.fov = lerpf(camera.fov, 55.0 if aiming else 70.0, clampf(10.0 * delta, 0.0, 1.0))
+	camera.fov = lerpf(camera.fov, Settings.fov - 15.0 if aiming else Settings.fov, clampf(10.0 * delta, 0.0, 1.0))
 	if _rigged:
 		_update_anim(delta, not seat_relaxed)
 	if seat_relaxed:
@@ -1230,13 +1236,16 @@ func _shoot() -> void:
 	Sfx.ui("pistol_shot" if weapon == "sidearm" else "blaster", -9.0, 0.06)
 
 	muzzle_light.light_energy = 6.0
-	cam_pitch.rotation.x = minf(cam_pitch.rotation.x + 0.006, deg_to_rad(45.0))
+	if Settings.camera_recoil:
+		cam_pitch.rotation.x = minf(cam_pitch.rotation.x + 0.006, deg_to_rad(45.0))
 
 
 # ------------------------------------------------------------ health
 
 ## Small "CRIT" number that floats up off the target.
 func _crit_popup(at: Vector3, dmg: float) -> void:
+	if not Settings.damage_numbers:
+		return
 	var l := Label3D.new()
 	l.text = "CRIT %d" % int(round(dmg))
 	l.font_size = 44
@@ -1283,6 +1292,8 @@ func take_damage(amount: float, _from_dir := Vector3.ZERO) -> void:
 
 
 func _combat_text(text: String, col: Color) -> void:
+	if not Settings.damage_numbers:
+		return
 	var l := Label3D.new()
 	l.text = text
 	l.font_size = 40

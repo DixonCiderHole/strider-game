@@ -9,6 +9,8 @@
   - `tools/assetgen/*.py` write the `.glb` models.
   - After changing a model, open the Godot editor so it re-imports before
     running with F5.
+- **Cutscenes:** follow `CUTSCENES.md` (SWTOR-style: letterbox, speaker shots,
+  subtitles with the speaker's name). Only build one when Matt asks for it.
 - **Banter system:** built (`scripts/banter.gd`). Add new lines there, following `LORE.md`.
 - **Quests:** future quests may start by talking to someone or by interacting
   with an object.

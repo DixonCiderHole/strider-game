@@ -128,7 +128,7 @@ func on_respawn() -> void:
 # ---------------------------------------------------------------- pop-ups
 
 func _pop(id: String, title: String, body: String, min_t: float, max_t: float, until: String) -> void:
-	if GS.flags.get("tut:" + id, false) or _card_id == id:
+	if not Settings.show_tutorials or GS.flags.get("tut:" + id, false) or _card_id == id:
 		return
 	for q in _queue:
 		if q[0] == id:

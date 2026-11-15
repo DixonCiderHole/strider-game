@@ -1497,9 +1497,9 @@ func _start_talk() -> void:
 		_ui.add_child(_talk)
 		var v := UI.vbox(8)
 		_talk.add_child(v)
-		_talk_name = UI.label("", 22, UI.ACCENT)
+		_talk_name = UI.label("", Settings.subtitle_px(22), UI.ACCENT)
 		v.add_child(_talk_name)
-		_talk_text = UI.label("", 22, UI.TEXT)
+		_talk_text = UI.label("", Settings.subtitle_px(22), UI.TEXT)
 		_talk_text.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		_talk_text.custom_minimum_size = Vector2(600, 0)
 		v.add_child(_talk_text)

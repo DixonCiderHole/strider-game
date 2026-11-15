@@ -42,9 +42,9 @@ func _ready() -> void:
 	add_child(_panel)
 	var v := UI.vbox(8)
 	_panel.add_child(v)
-	_name = UI.label("", 22, UI.ACCENT)
+	_name = UI.label("", Settings.subtitle_px(22), UI.ACCENT)
 	v.add_child(_name)
-	_text = UI.label("", 22, UI.TEXT)
+	_text = UI.label("", Settings.subtitle_px(22), UI.TEXT)
 	_text.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_text.custom_minimum_size = Vector2(600, 0)
 	v.add_child(_text)

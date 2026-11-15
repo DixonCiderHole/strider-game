@@ -55,6 +55,7 @@ static func at(pos: Vector3, sound: String, volume_db := 0.0, pitch_var := 0.08,
 	p.unit_size = unit_size
 	p.max_distance = 90.0
 	p.attenuation_filter_cutoff_hz = 9000.0
+	p.bus = "SFX"
 	parent.add_child(p)
 	p.global_position = pos
 	p.play()
@@ -72,6 +73,7 @@ static func ui(sound: String, volume_db := 0.0, pitch_var := 0.0) -> void:
 	p.volume_db = volume_db
 	p.pitch_scale = randf_range(1.0 - pitch_var, 1.0 + pitch_var)
 	p.process_mode = Node.PROCESS_MODE_ALWAYS
+	p.bus = "SFX"
 	tree.root.add_child(p)
 	p.play()
 	p.finished.connect(p.queue_free)
@@ -89,11 +91,13 @@ static func loop(parent: Node, sound: String, volume_db := 0.0, unit_size := 6.0
 		p.unit_size = unit_size
 		p.max_distance = 60.0
 		p.autoplay = true
+		p.bus = "Ambience"
 		parent.add_child(p)
 		return p
 	var q := AudioStreamPlayer.new()
 	q.stream = s
 	q.volume_db = volume_db
 	q.autoplay = true
+	q.bus = "Ambience"
 	parent.add_child(q)
 	return q

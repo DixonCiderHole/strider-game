@@ -865,6 +865,24 @@ func _refresh_map() -> void:
 		var lbl: String = n.get_meta("label", "Objective")
 		places.append({"pos": (n as Node3D).global_position, "label": lbl, "kind": "objective",
 				"info": n.get_meta("info", "Where you need to go next.")})
+	# The current mission's objective (what the compass points at).
+	var ov = _hud_overlay()
+	if ov != null:
+		var op = ov.objective_point()
+		if op != null:
+			var near_existing := false
+			for pl in places:
+				if (pl["pos"] as Vector3).distance_to(op) < 3.0:
+					near_existing = true
+			if not near_existing:
+				var q := GS.current_quest()
+				var txt := "Current objective"
+				if not q.is_empty():
+					for g in q["goals"]:
+						if not GS.goal_done(g[0]):
+							txt = String(g[1])
+							break
+				places.append({"pos": op, "label": "Objective", "kind": "objective", "info": txt})
 	var me: Vector3 = player.global_position
 	places.sort_custom(func(a, b):
 		var ka: int = 0 if a["kind"] == "objective" else 1
@@ -1155,27 +1173,138 @@ func _respec() -> void:
 
 # ---------------------------------------------------------------- QUESTS
 
+var _quest_list: VBoxContainer
+var _quest_detail: VBoxContainer
+var _quest_sel := -1   # -1 = follow the current quest
+
+
 func _build_quests(page: Control) -> void:
 	var v := UI.vbox(10)
 	page.add_child(v)
-	v.add_child(UI.label("QUESTS", 30, UI.ACCENT))
-	_quests_box = UI.vbox(8)
-	v.add_child(_quests_box)
+	v.add_child(UI.label("MISSION LOG", 30, UI.ACCENT))
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 18)
+	row.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	v.add_child(row)
+	# Left: every mission.
+	var left := PanelContainer.new()
+	left.add_theme_stylebox_override("panel", UI.box(Color(0.04, 0.04, 0.05, 0.85), Color(0.3, 0.3, 0.35, 0.6), 1, 4))
+	left.custom_minimum_size = Vector2(380, 0)
+	row.add_child(left)
+	_quest_list = UI.vbox(6)
+	left.add_child(_quest_list)
+	# Right: the chosen mission in detail.
+	var right := PanelContainer.new()
+	var rst := UI.box(Color(0.04, 0.04, 0.05, 0.85), Color(0.3, 0.3, 0.35, 0.6), 1, 4)
+	rst.content_margin_left = 18
+	rst.content_margin_right = 18
+	rst.content_margin_top = 14
+	rst.content_margin_bottom = 14
+	right.add_theme_stylebox_override("panel", rst)
+	right.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(right)
+	var scroll := ScrollContainer.new()
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	right.add_child(scroll)
+	_quests_box = UI.vbox(10)   # kept for older callers
+	_quest_detail = _quests_box
+	_quest_detail.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.add_child(_quest_detail)
+
+
+func _hud_overlay():
+	var nodes := get_tree().get_nodes_in_group("hud_overlay")
+	return nodes[0] if not nodes.is_empty() else null
+
+
+func _wrap(text: String, size: int, col: Color) -> Label:
+	var l := UI.label(text, size, col)
+	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	l.custom_minimum_size = Vector2(560, 0)
+	return l
 
 
 func _refresh_quests() -> void:
-	for c in _quests_box.get_children():
+	for c in _quest_list.get_children():
 		c.queue_free()
+	for c in _quest_detail.get_children():
+		c.queue_free()
+	var ov = _hud_overlay()
+
+	# This area's own objective (the trail, the crash site...).
+	if ov != null and String(ov.area_title) != "":
+		var ab := UI.button("◆  " + String(ov.area_title).to_upper(), 360)
+		ab.toggle_mode = true
+		ab.button_pressed = _quest_sel == -2
+		ab.pressed.connect(func():
+			_quest_sel = -2
+			_refresh_quests())
+		_quest_list.add_child(ab)
+
+	var cur := GS.quest_stage
+	var deferred: bool = GS.flags.get("familiar_face_deferred", false)
 	for i in Items.QUESTS.size():
 		var q: Dictionary = Items.QUESTS[i]
-		if i < GS.quest_stage:
-			_quests_box.add_child(UI.label("✓  " + String(q["title"]), 20, UI.MUTED))
-		elif i == GS.quest_stage:
-			_quests_box.add_child(UI.label("▶  " + String(q["title"]), 24, UI.TEXT))
-			for g in q["goals"]:
-				var done := GS.goal_done(g[0])
-				_quests_box.add_child(UI.label("        %s %s%s" % ["✓" if done else "•", g[1], GS.goal_progress(g[0])], 18, UI.ACCENT if not done else UI.MUTED))
+		var label := ""
+		if i == 0 and deferred and GS.active_member != "trooper":
+			label = "…  " + String(q["title"]) + "  (later)"
+		elif i < cur:
+			label = "✓  " + String(q["title"])
+		elif i == cur:
+			label = "▶  " + String(q["title"])
 		else:
-			_quests_box.add_child(UI.label("•  ???", 20, Color(0.4, 0.4, 0.45)))
-	if GS.quest_stage >= Items.QUESTS.size():
-		_quests_box.add_child(UI.label("All camp quests done. Explore and survive.", 20, UI.TEXT))
+			label = "•  ???"
+		var b := UI.button(label, 360)
+		b.toggle_mode = true
+		b.disabled = i > cur
+		b.button_pressed = (_quest_sel == i) or (_quest_sel == -1 and i == cur)
+		b.pressed.connect(func():
+			_quest_sel = i
+			_refresh_quests())
+		_quest_list.add_child(b)
+	if cur >= Items.QUESTS.size():
+		_quest_list.add_child(_wrap("All camp missions done. Explore and survive.", 16, UI.MUTED))
+
+	var sel := _quest_sel
+	if sel == -1:
+		sel = mini(cur, Items.QUESTS.size() - 1)
+	if sel == -2 and ov != null:
+		_quest_detail.add_child(UI.label(String(ov.area_title).to_upper(), 26, UI.TEXT))
+		_quest_detail.add_child(UI.label("CURRENT AREA", 14, UI.ACCENT))
+		_quest_detail.add_child(_wrap(String(ov.area_goals), 18, UI.TEXT))
+		_add_tracking(ov)
+		return
+	if sel < 0 or sel >= Items.QUESTS.size():
+		return
+	var q: Dictionary = Items.QUESTS[sel]
+	var state := "COMPLETE" if sel < cur else ("IN PROGRESS" if sel == cur else "LOCKED")
+	if sel == 0 and deferred and GS.active_member != "trooper":
+		state = "LATER  ·  when he's back on his feet"
+	_quest_detail.add_child(UI.label(String(q["title"]).to_upper(), 26, UI.TEXT))
+	_quest_detail.add_child(UI.label(state, 14, UI.ACCENT if sel == cur else UI.MUTED))
+	_quest_detail.add_child(_wrap(String(q.get("desc", "")), 17, UI.MUTED))
+	_quest_detail.add_child(UI.label("OBJECTIVES", 15, UI.ACCENT))
+	for g in q["goals"]:
+		var done: bool = sel < cur or GS.goal_done(g[0])
+		var line := "%s  %s%s" % ["✓" if done else "□", g[1], "" if sel < cur else GS.goal_progress(g[0])]
+		_quest_detail.add_child(UI.label(line, 19, UI.MUTED if done else UI.TEXT))
+		if not done and g.size() > 2:
+			_quest_detail.add_child(_wrap("      " + String(g[2]), 15, Color(0.75, 0.8, 0.85)))
+	if sel == cur:
+		_add_tracking(ov)
+	_quest_detail.add_child(UI.label("REWARD", 15, UI.ACCENT))
+	_quest_detail.add_child(UI.label("+%d XP" % Items.QUEST_XP, 18, Color(0.95, 0.75, 0.3)))
+
+
+## "Objective: North-east · 34 m" from the compass target, if there is one.
+func _add_tracking(ov) -> void:
+	if ov == null or player == null or not is_instance_valid(player):
+		return
+	var o = ov.objective_point()
+	if o == null:
+		return
+	var d: Vector3 = (o as Vector3) - player.global_position
+	d.y = 0.0
+	var where := "right here" if d.length() < 6.0 else "%s  ·  %d m" % [_bearing_name(d), int(d.length())]
+	_quest_detail.add_child(UI.label("TRACKING", 15, UI.ACCENT))
+	_quest_detail.add_child(UI.label("◆  Objective: " + where + "   (gold marker on the compass and map)", 17, Color(1.0, 0.8, 0.25)))
