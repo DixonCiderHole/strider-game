@@ -30,6 +30,11 @@ var wake_range := 26.0
 ## (smoke, flash) wander, unable to find their prey.
 var stun_t := 0.0
 var confuse_t := 0.0
+## Elites: bigger, tougher, a molten glow in the chest, and they drop salvage.
+## Spawners can set elite_chance (0 = never) before adding the creature.
+var elite_chance := 0.1
+var elite := false
+const ELITE_SALVAGE := 20
 var _wander_yaw := 0.0
 
 var gravity: float = ProjectSettings.get_setting("physics/3d/default_gravity")
@@ -79,11 +84,28 @@ func _ready() -> void:
 	_time = randf() * 10.0
 	_pounce_cd = randf_range(2.0, 5.0)
 	_build_body()
+	if not elite and elite_chance > 0.0 and randf() < elite_chance:
+		elite = true
+	if elite:
+		_make_elite()
 	if dormant:
 		_state = State.CHASE   # quiet: idle until woken (see wake())
 		return
 	# Not every creature roars, so a wave doesn't freeze in place.
 	_set_state(State.ROAR if randf() < 0.6 else State.CHASE)
+
+
+func _make_elite() -> void:
+	health *= 2.6
+	attack_damage *= 1.4
+	speed *= 1.08
+	_visual.scale = Vector3.ONE * 1.3
+	var glow := OmniLight3D.new()
+	glow.light_color = Color(1.0, 0.45, 0.12)
+	glow.light_energy = 2.2
+	glow.omni_range = 3.2
+	glow.position = Vector3(0.0, 1.5, -0.2)
+	add_child(glow)
 
 
 func stun(t: float) -> void:
@@ -136,7 +158,8 @@ func _build_body() -> void:
 	_flash_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	_flash_mat.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
 	_flash_mat.albedo_color = Color(1.0, 0.25, 0.15, 0.0)
-	_mesh.material_overlay = _flash_mat
+	# The overlay is only attached while it's flashing: an overlay draws the
+	# whole mesh a second time, even when it's fully transparent.
 
 
 func _set_state(s: State) -> void:
@@ -170,6 +193,11 @@ func _physics_process(delta: float) -> void:
 		move_and_slide()
 		return
 
+	if not dormant:
+		_retarget_t -= delta
+		if _retarget_t <= 0.0 or target == null or not is_instance_valid(target) or target.is_dead:
+			_retarget_t = 1.2
+			_pick_prey()
 	var player_alive: bool = target != null and is_instance_valid(target) and not target.is_dead
 	var to_target := Vector3.ZERO
 	var dist := INF
@@ -283,6 +311,30 @@ func _atk_windup() -> float:
 	return 0.38 if _atk == Atk.CROSS else 0.3
 
 
+## Goes for whoever's closest: you, or one of your party (they count as a
+## little further away, so you stay the main target).
+var _player = null
+var _retarget_t := 0.0
+
+func _pick_prey() -> void:
+	if _player == null or not is_instance_valid(_player):
+		_player = target if (target != null and is_instance_valid(target) and target.is_in_group("player")) \
+				else get_tree().get_first_node_in_group("player")
+	var best = null
+	var bd := INF
+	if _player != null and is_instance_valid(_player) and not _player.is_dead:
+		best = _player
+		bd = global_position.distance_to(_player.global_position)
+	for m in get_tree().get_nodes_in_group("party_member"):
+		if not (m is Node3D) or not ("is_dead" in m) or m.is_dead or not m.has_method("take_damage"):
+			continue
+		var d: float = global_position.distance_to(m.global_position) * 1.35
+		if d < bd:
+			bd = d
+			best = m
+	target = best if best != null else _player
+
+
 func _atk_length() -> float:
 	return 1.0 if _atk == Atk.CROSS else 0.8
 
@@ -318,6 +370,7 @@ func take_damage(amount: float, from_dir := Vector3.ZERO) -> void:
 	_flinch_v -= 9.0
 	_flinch_side = randf_range(-1.0, 1.0)
 	_flash_mat.albedo_color.a = 0.55
+	_mesh.material_overlay = _flash_mat
 	if health <= 0.0:
 		_die()
 
@@ -326,7 +379,12 @@ func _die() -> void:
 	_dead = true
 	_set_state(State.DEAD)
 	Sfx.at(global_position + Vector3.UP, "creature_death", -2.0, 0.12, 9.0)
-	GS.add_xp(8)
+	GS.add_xp(20 if elite else 8)
+	GS.flags["kills"] = int(GS.flags.get("kills", 0)) + 1
+	if elite:
+		GS.flags["elite_kills"] = int(GS.flags.get("elite_kills", 0)) + 1
+		GS.add_salvage(ELITE_SALVAGE)
+		GS.toast("Elite down  ·  +%d salvage" % ELITE_SALVAGE)
 	_drop_loot.call_deferred()
 	_death_side = 1.0 if randf() < 0.5 else -1.0
 	collision_layer = 0
@@ -346,11 +404,26 @@ func is_dead() -> bool:
 
 # ---------------------------------------------------------------- animation
 
+var _anim_skip := 0
+var _anim_acc := 0.0
+
 func _process(delta: float) -> void:
 	if _skel == null:
 		return
+	# Far from the camera, pose the skeleton every 4th frame (it's too far
+	# away to see the difference, and it's most of a creature's cost).
+	var cam := get_viewport().get_camera_3d()
+	if cam != null and global_position.distance_squared_to(cam.global_position) > 45.0 * 45.0:
+		_anim_acc += delta
+		_anim_skip += 1
+		if _anim_skip % 4 != 0:
+			return
+		delta = _anim_acc
+	_anim_acc = 0.0
 	_time += delta
 	_flash_mat.albedo_color.a = move_toward(_flash_mat.albedo_color.a, 0.0, delta * 3.5)
+	if _mesh.material_overlay != null and _flash_mat.albedo_color.a <= 0.0:
+		_mesh.material_overlay = null
 	# Flinch spring.
 	_flinch_v += (-_flinch * 120.0 - _flinch_v * 14.0) * delta
 	_flinch += _flinch_v * delta

@@ -68,6 +68,17 @@ const ITEMS := {
 		"damage": 0.85, "rate": 0.38, "model": "res://models/weapons/pistol_long.glb", "len": 0.36,
 		"grip": Vector2(0.78, -0.2), "muzzle": Vector2(-0.95, 0.3),
 		"desc": "Long-barrelled, precise self-charging pistol. Slow and accurate. Switch weapon: Q."},
+	# Strider droid parts (Spire Canyon side areas) and its arm attachments.
+	"strider_legs_f": {"name": "Strider Front Legs", "type": "quest", "stack": 1, "color": Color(0.35, 0.6, 0.9), "tag": "LGF",
+		"desc": "A Strider escort droid's front leg pair, servos still whole. Something dragged it a long way."},
+	"strider_legs_b": {"name": "Strider Rear Legs", "type": "quest", "stack": 1, "color": Color(0.35, 0.6, 0.9), "tag": "LGB",
+		"desc": "The droid's rear leg pair, frosted over but sound."},
+	"strider_arm_l": {"name": "Strider Left Cannon", "type": "quest", "stack": 1, "color": Color(0.35, 0.6, 0.9), "tag": "CNL",
+		"desc": "The droid's left weapon arm. Mud in the barrel; the coils test fine."},
+	"strider_arm_r": {"name": "Strider Right Arm Mount", "type": "quest", "stack": 1, "color": Color(0.35, 0.6, 0.9), "tag": "CNR",
+		"desc": "The droid's right weapon arm and its quick-change socket: it takes tool attachments as well as the cannon."},
+	"saw_arm": {"name": "Plasma Saw Arm", "type": "droid_arm", "stack": 1, "color": Color(1.0, 0.45, 0.15), "tag": "SAW",
+		"desc": "A heavy cutting arm for the Strider droid's right socket: a heated diamond-tooth blade that cuts hull plate. Fit it in the party menu. With it fitted, the droid fights up close."},
 	"control_chip": {"name": "Drone Control Chip", "type": "resource", "stack": 1, "color": Color(0.9, 0.2, 0.2), "tag": "CHP",
 		"desc": "A hand-built control chip to replace the burnt-out one in the drone from the freighter."},
 	# Tools
@@ -105,6 +116,15 @@ const ITEMS := {
 		"bonus": {"reload": 0.3}, "desc": "Reload 30% faster while equipped."},
 	"mod_cooling":   {"name": "Cooling Module", "type": "module", "slot": "module", "stack": 1, "color": Color(0.5, 0.75, 0.95), "tag": "M-CO",
 		"bonus": {"rate": 0.1}, "desc": "+10% fire rate while equipped."},
+	# Only from Unrelenting Horde milestones (waves 5, 10, 15, 20).
+	"mod_hordebreaker": {"name": "Hordebreaker Core", "type": "module", "slot": "module", "stack": 1, "color": Color(1.0, 0.35, 0.2), "tag": "M-HB",
+		"bonus": {"damage": 0.15, "rate": 0.08}, "desc": "Horde exclusive. +15% weapon damage and +8% fire rate while equipped."},
+	"mod_bulwark":     {"name": "Bulwark Matrix", "type": "module", "slot": "module", "stack": 1, "color": Color(0.85, 0.65, 0.3), "tag": "M-BW",
+		"bonus": {"armor": 0.15, "regen": 2.0}, "desc": "Horde exclusive. Take 15% less damage and regenerate 2 health/s while equipped."},
+	"mod_scavenger":   {"name": "Scavenger Lattice", "type": "module", "slot": "module", "stack": 1, "color": Color(0.6, 0.9, 0.4), "tag": "M-SV",
+		"bonus": {"salvage": 0.25}, "desc": "Horde exclusive. +25% salvage from everything while equipped."},
+	"mod_relentless":  {"name": "Relentless Heart", "type": "module", "slot": "module", "stack": 1, "color": Color(0.95, 0.2, 0.35), "tag": "M-RH",
+		"bonus": {"damage": 0.12, "crit": 0.08, "reload": 0.2}, "desc": "Horde exclusive. +12% damage, +8% critical chance and 20% faster reloads while equipped."},
 	# Placeable storage
 	"crate_wood":  {"name": "Wooden Crate", "type": "placeable", "stack": 5, "slots": 10, "color": Color(0.5, 0.36, 0.22), "tag": "CRW",
 		"desc": "Timber storage crate on a scrap-metal frame with a mag-lock. Holds 10 stacks. Use it from your backpack to place it at camp."},
@@ -142,6 +162,7 @@ const RECIPES := [
 	{"id": "mod_armor", "out": "mod_armor", "count": 1, "in": {"ore": 4, "scrap": 4, "tech": 2}, "bench": 3, "cat": "MODULES"},
 	{"id": "mod_cooling", "out": "mod_cooling", "count": 1, "in": {"tech": 3, "plastic": 2, "crystal": 1}, "bench": 3, "skill": "modding", "cat": "MODULES"},
 	{"id": "mod_crit", "out": "mod_crit", "count": 1, "in": {"crystal": 3, "tech": 2, "ore": 2}, "bench": 3, "skill": "modding", "cat": "MODULES"},
+	{"id": "saw_arm", "out": "saw_arm", "count": 1, "in": {"scrap": 8, "ore": 4, "tech": 4, "crystal": 2}, "bench": 2, "needs": "droid_rebuilt", "cat": "TOOLS"},
 	{"id": "control_chip", "out": "control_chip", "count": 1, "in": {"tech": 2, "scrap": 2, "plastic": 1}, "bench": 1, "cat": "AMMO & GEAR"},
 	# Testing: every new weapon for 1 scrap.
 	{"id": "lmg", "out": "lmg", "count": 1, "in": {"scrap": 1}, "bench": 1, "cat": "TEST WEAPONS"},
@@ -220,7 +241,7 @@ const SKILLS := [
 	{"id": "overclock", "branch": "ENGINEER", "tier": 2, "name": "Overclock", "ranks": 2, "desc": "Equipped module bonuses +25% per rank."},
 	{"id": "master_crafter", "branch": "ENGINEER", "tier": 3, "name": "Master Crafter", "ranks": 1, "desc": "Crafting ammo, grenades and medical supplies makes one extra."},
 	# Command
-	{"id": "droid_link", "branch": "COMMAND", "tier": 0, "name": "Droid Link", "ranks": 3, "desc": "+10% droid damage per rank."},
+	{"id": "droid_link", "branch": "COMMAND", "tier": 0, "name": "Droid Link", "ranks": 3, "droid": true, "desc": "+10% droid damage per rank."},
 	{"id": "squad_leader", "branch": "COMMAND", "tier": 0, "name": "Squad Leader", "ranks": 2, "desc": "+12% ally damage per rank."},
 	{"id": "adrenaline", "branch": "COMMAND", "tier": 1, "name": "Adrenaline", "ranks": 2, "desc": "Each kill restores 6 health per rank."},
 	{"id": "commander", "branch": "COMMAND", "tier": 2, "name": "Commanding Presence", "ranks": 2, "desc": "+5 Presence per rank."},
@@ -326,9 +347,46 @@ const MED_QUESTS := [
 
 ## The mini combat drone (starts when the camp missions or her medical
 ## missions are done, whichever is first; either of you can do it). GS.flags["drone_stage"].
+## Droid attachments you can fit to the Strider's right arm socket
+## (party menu). Each opens a kind of obstacle.
+const DROID_ARMS := {
+	"saw_arm": {"name": "Plasma Saw", "does": "Cuts through hull plate and bulkheads. Fights up close."},
+}
+
+## The Strider droid, rebuilt from parts in the Spire Canyon. Starts the
+## first time you reach the canyon. GS.flags["strider_stage"].
+const STRIDER_QUESTS := [
+	{"title": "Scattered Steel",
+		"desc": "An Ascendancy supply drop came down in the canyon. In its cradle lies the frame of a Strider escort droid, stripped of its legs and arms. Strider units imprint on whoever brings them back online.",
+		"goals": [["found_cradle", "Find the droid frame in the supply drop",
+			"Spire Canyon: the crashed supply drop sits on the middle shelf on the canyon's north side. Follow the cave up from the canyon floor."]]},
+	{"title": "Parts Hunt",
+		"desc": "The limbs were torn off and carried away, into each of the four places the canyon branches into. Something has made a nest of each one.",
+		"goals": [["have:strider_legs_f:1", "Recover the front legs (Glowmire Caverns, north-west)",
+			"Take the north-west path out of the canyon into the caverns."],
+			["have:strider_legs_b:1", "Recover the rear legs (Rimefall Plateau, north-east)",
+			"Take the north-east path up onto the frozen plateau."],
+			["have:strider_arm_l:1", "Recover the left cannon (Sunken Mire, south-west)",
+			"Take the south-west path down into the swamp."],
+			["have:strider_arm_r:1", "Recover the right arm mount (the wreck of the VIGILANT, south-east)",
+			"Take the south-east path into the crashed capital ship."]]},
+	{"title": "Wake the Strider",
+		"desc": "All four limbs. Bolt them back onto the frame in the cradle and give it power.",
+		"goals": [["droid_rebuilt", "Rebuild the droid at the supply drop cradle",
+			"Back in Spire Canyon: press E at the cradle with all four parts."]]},
+	{"title": "Cut a Way Through",
+		"desc": "A whole bulkhead from some broken warship is jammed across the canyon's east fork. Nothing gets past it, but the Strider's right socket takes tool arms. A plasma saw would do it.",
+		"goals": [["crafted:saw_arm", "Craft a Plasma Saw Arm at the workbench",
+			"At the Base Camp workbench (TOOLS). Needs scrap, ore, tech and crystal."],
+			["fitted:saw_arm", "Fit the saw arm to the droid",
+			"Open the party menu (P) and pick the Plasma Saw under the droid's ARM."],
+			["bulkhead_cut", "Cut through the bulkhead in the canyon's east fork",
+			"Spire Canyon, east fork: walk up to the bulkhead with the droid and press E."]]},
+]
+
 const DRONE_QUESTS := [
 	{"title": "Signal in the Wreck",
-		"desc": "For days now the Strider droid has been pinging a weak transponder from Shipfall Reach, east over the hills. It's coming from the broken freighter: something small, still holding a charge.",
+		"desc": "For days now your helmet comm has been picking up a weak transponder from Shipfall Reach, east over the hills. It's coming from the broken freighter: something small, still holding a charge.",
 		"goals": [["found_drone", "Find the source of the signal in the freighter's nose",
 			"Take the trail east out of Base Camp (it leaves the camp path by the escape pod) and press E at its end to reach Shipfall Reach. Then find the nose half of the broken freighter, west of the river. Walk in through the torn end and look along the cargo racks."]]},
 	{"title": "Control Chip",

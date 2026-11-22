@@ -46,12 +46,20 @@ var party_id := "survivor"
 var party_name := "SURVIVOR"
 var max_health := 100.0
 var health := 100.0
+## Down in a fight (see revive_point.gd). Creatures go after her too.
+var is_dead := false
+var _down_amt := 0.0
 
 
 func follow(p) -> void:
 	player = p
 	mode = "idle"
 	add_to_group("party_member")
+	if get_node_or_null("Revive") == null:
+		var rv = load("res://scripts/revive_point.gd").new()
+		rv.name = "Revive"
+		rv.member = self
+		add_child(rv)
 	if GS.flags.get("knows_ilsa", false):
 		party_name = "ILSA"
 	if get_node_or_null("Talk") == null:
@@ -101,8 +109,29 @@ func _ready() -> void:
 		add_child(_rifle_hands)
 
 
+func take_damage(amount: float, _dir := Vector3.ZERO) -> void:
+	if is_dead or player == null:
+		return
+	health = maxf(health - amount, 0.0)
+	if health <= 0.0:
+		is_dead = true
+		_target = null
+		Sfx.at(global_position + Vector3.UP, "player_hit", -4.0, 0.1, 8.0)
+		GS.toast("%s is down! Get to her and hold E." % party_name.capitalize())
+
+
+func revive(frac: float) -> void:
+	is_dead = false
+	health = max_health * frac
+
+
 func _physics_process(delta: float) -> void:
 	if player == null or not is_instance_valid(player):
+		return
+	if is_dead:
+		_target = null
+		move_speed = 0.0
+		_update_rifle()
 		return
 	_cd -= delta
 	# Keep up on your right, a step behind.
@@ -199,7 +228,9 @@ func _process(delta: float) -> void:
 	_move_amt = lerpf(_move_amt, clampf(move_speed / 1.4, 0.0, 1.0), clampf(6.0 * delta, 0.0, 1.0))
 	_drag_amt = lerpf(_drag_amt, 1.0 if mode == "drag" else 0.0, clampf(4.0 * delta, 0.0, 1.0))
 	_aim_amt = lerpf(_aim_amt, 1.0 if (_target != null and player != null) else 0.0, clampf(8.0 * delta, 0.0, 1.0))
-	_sit_amt = 1.0 if mode == "sit" else lerpf(_sit_amt, 0.0, clampf(4.0 * delta, 0.0, 1.0))
+	_down_amt = lerpf(_down_amt, 1.0 if is_dead else 0.0, clampf(5.0 * delta, 0.0, 1.0))
+	var sit_target := 1.0 if (mode == "sit" or is_dead) else 0.0
+	_sit_amt = 1.0 if mode == "sit" else lerpf(_sit_amt, sit_target, clampf(4.0 * delta, 0.0, 1.0))
 	_gait += delta * (2.0 + move_speed * 3.2) * (1.0 if _move_amt > 0.05 else 0.0)
 
 	var p := {}
@@ -258,6 +289,15 @@ func _process(delta: float) -> void:
 		p["Spine"] += Vector3(14.0 * st, 0.0, 0.0)
 		p["Spine1"] += Vector3(6.0 * st, 0.0, 0.0)
 		p["Head"] += Vector3(10.0 * st, 0.0, 0.0)
+	# Down: slumped forward where she sat, arms hanging, head low.
+	var dn := _down_amt
+	if dn > 0.001:
+		p["Spine"] += Vector3(22.0 * dn, 0.0, 6.0 * dn)
+		p["Spine1"] += Vector3(14.0 * dn, 0.0, 0.0)
+		p["Neck"] += Vector3(18.0 * dn, 0.0, 0.0)
+		p["Head"] += Vector3(20.0 * dn, 0.0, 8.0 * dn)
+		p["LeftArm"] += Vector3(30.0 * dn, 0.0, 20.0 * dn)
+		p["RightArm"] += Vector3(30.0 * dn, 0.0, -20.0 * dn)
 
 	# Walking (backwards while dragging): legs swing, knees lift.
 	var m := _move_amt

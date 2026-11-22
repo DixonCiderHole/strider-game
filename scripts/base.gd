@@ -91,7 +91,7 @@ const TALK := [
 	["YOU", "Anyone else make it?"],
 	["SURVIVOR", "Just us. My unit's gone too. I went back for supplies and found you still breathing."],
 	["YOU", "So what now?"],
-	["SURVIVOR", "Now we stay alive. You've got a droid that seems to like you, and I've got a rifle. I'll watch your back."],
+	["SURVIVOR", "Now we stay alive. You've got a blaster and I've got a rifle. I'll watch your back."],
 ]
 var _p_title: Label
 var _p_blurb: Label
@@ -160,12 +160,14 @@ func _ready() -> void:
 		player.model.rotation.y = PI * 0.5
 		player.cam_yaw.rotation.y = PI * 0.5
 
-	droid = CompanionScript.new()
-	droid.name = "Droid"
-	droid.player = player
-	droid.damage = GS.droid_damage()
-	droid.position = Vector3(3.0, _ground(Vector3(3, 0, 12)) + 0.5, 12.0)
-	add_child(droid)
+	# The Strider droid only joins once you've rebuilt one (Spire Canyon).
+	if GS.droid_online():
+		droid = CompanionScript.new()
+		droid.name = "Droid"
+		droid.player = player
+		droid.damage = GS.droid_damage()
+		droid.position = Vector3(3.0, _ground(Vector3(3, 0, 12)) + 0.5, 12.0)
+		add_child(droid)
 
 	menu = PauseMenuScript.new()
 	menu.player = player
@@ -312,7 +314,8 @@ func _her_first_morning() -> void:
 	player._facing_yaw = yaw
 	player.model.rotation.y = yaw
 	player.cam_yaw.rotation.y = yaw + PI * 0.15
-	droid.position = seat + Vector3(-1.6, _ground(seat) + 0.5, -0.6)
+	if droid != null:
+		droid.position = seat + Vector3(-1.6, _ground(seat) + 0.5, -0.6)
 	_show_banner("You've kept watch by the fire all night.\nHe's alive, but only just. He needs rest, and the camp needs supplies.\n\nPress any key to get up", 600.0)
 	await get_tree().create_timer(1.5).timeout
 	_waiting_her_up = true
@@ -346,7 +349,8 @@ func _wake_up() -> void:
 	player.model.rotation.y = yaw
 	player.cam_yaw.rotation.y = yaw + PI * 0.75
 	player.health = player.max_health * 0.5
-	droid.position = bed + Vector3(-1.5, _ground(bed) + 0.5, 2.5)
+	if droid != null:
+		droid.position = bed + Vector3(-1.5, _ground(bed) + 0.5, 2.5)
 	_show_banner("You wake on a cot by a fire.\nShe's sitting across from you, watching the flames.\n\nPress any key to get up", 600.0)
 	await get_tree().create_timer(1.5).timeout
 	_waiting_get_up = true
@@ -404,7 +408,7 @@ func _input(event) -> void:
 func _unhandled_input(event) -> void:
 	if not (event is InputEventKey and event.pressed and not event.echo):
 		return
-	if get_tree().paused:
+	if get_tree().paused or droid == null or not is_instance_valid(droid):
 		return
 	match event.physical_keycode:
 		KEY_1:
@@ -990,8 +994,44 @@ func _add_station(prop_name: String, pos: Vector3, yaw_deg: float, size: Vector3
 	glow.position = Vector3(0.0, size.y * 0.7, size.z * 0.5 + 0.5)
 	body.add_child(glow)
 	var front := body.global_transform * Vector3(0.0, 0.0, size.z * 0.5 + 0.35)
-	_add_interact(front, "Use %s  (%s upgrades)" % [String(info["crate"]).capitalize(), info["title"]], func(): _open_panel(track))
+	_add_interact(front, "Use %s  (%s upgrades)" % [String(info["crate"]).capitalize(), info["title"]], func():
+		if track == "droid" and not GS.droid_online():
+			_show_banner("A droid workbench, tools laid out for a Strider unit.\nYou'd need a droid to work on.", 3.5)
+			return
+		_open_panel(track))
 	return body
+
+
+## The job board: repeatable salvage jobs (scripts/bounty_board.gd).
+const JOB_BOARD_POS := Vector3(3.4, 0.0, -16.0)
+var _jobs_panel
+
+func _build_job_board() -> void:
+	var body := StaticBody3D.new()
+	body.name = "JobBoard"
+	body.position = JOB_BOARD_POS + Vector3(0.0, _ground(JOB_BOARD_POS), 0.0)
+	body.rotation_degrees.y = _yaw_to(JOB_BOARD_POS, FIRE_POS)
+	add_child(body)
+	if ResourceLoader.exists("res://models/job_board.glb"):
+		body.add_child(load("res://models/job_board.glb").instantiate())
+	var cs := CollisionShape3D.new()
+	var cap := CylinderShape3D.new()
+	cap.radius = 0.4
+	cap.height = 1.9
+	cs.shape = cap
+	cs.position.y = 0.95
+	body.add_child(cs)
+	var l := OmniLight3D.new()
+	l.light_color = Color(1.0, 0.65, 0.25)
+	l.light_energy = 0.8
+	l.omni_range = 2.5
+	l.position = Vector3(0.0, 1.5, 0.5)
+	body.add_child(l)
+	_jobs_panel = load("res://scripts/bounty_board.gd").new()
+	add_child(_jobs_panel)
+	_add_interact(body.global_position + Vector3(0.0, 1.3, 0.0), "Check the job board", func():
+		_jobs_panel.player = player
+		_jobs_panel.open())
 
 
 func _yaw_to(from: Vector3, to: Vector3) -> float:
@@ -1047,6 +1087,7 @@ func _build_crates() -> void:
 	hl.position = Vector3(0.0, 1.3, 0.0)
 	holo.add_child(hl)
 	_add_interact(holo.global_position + Vector3(0.0, 0.9, 0.0), "Read: Survey Map", func(): LorePanel.read(get_tree(), "survey_map"))
+	_build_job_board()
 
 	# Work lamps light the back of the cave (replacing the old bare bulb).
 	for spec in [[Vector3(-3.9, 0.0, -22.3), true], [Vector3(3.9, 0.0, -22.1), false]]:
@@ -1603,7 +1644,8 @@ func _buy() -> void:
 	player.max_health = GS.player_max_health()
 	if player.max_health > old_max:
 		player.heal(player.max_health - old_max)
-	droid.damage = GS.droid_damage()
+	if droid != null and is_instance_valid(droid):
+		droid.damage = GS.droid_damage()
 	_refresh_panel()
 	if _p_buy.disabled:
 		_p_close.grab_focus()
@@ -1855,7 +1897,7 @@ func _quest_target():
 	if q.is_empty():
 		return null
 	# Her medical missions: everything happens out east, except the last step.
-	if GS.med_active() or GS.drone_active():
+	if GS.med_active() or GS.drone_active() or GS.strider_active():
 		for g in q["goals"]:
 			if GS.goal_done(g[0]):
 				continue

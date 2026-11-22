@@ -9,13 +9,29 @@ extends RefCounted
 ##
 ## Layout (south to north): Crash Site -> The Trail -> The Clearing ->
 ## The Escape -> Base Camp. Shipfall Reach branches off Base Camp to the
-## east (BRANCHES). Checked: no two areas overlap.
+## east (BRANCHES), and Spire Canyon off the Reach's east side, with its
+## five areas round it (CANYON_EXITS). Checked: no two areas overlap.
 
 ## Story order: each area's exit leads to the next one's entrance.
 const CHAIN := ["res://main.tscn", "res://path.tscn", "res://pinned.tscn", "res://drag.tscn", "res://base.tscn"]
 ## Side areas off the chain: [from, to]. `to`'s entrance is placed on the
 ## exit `from` has towards it (exit_to).
-const BRANCHES := [["res://base.tscn", "res://reach.tscn"]]
+const BRANCHES := [["res://base.tscn", "res://reach.tscn"], ["res://reach.tscn", "res://canyon.tscn"],
+	["res://canyon.tscn", "res://caverns.tscn"], ["res://canyon.tscn", "res://plateau.tscn"],
+	["res://canyon.tscn", "res://swamp.tscn"], ["res://canyon.tscn", "res://vigilant.tscn"],
+	["res://canyon.tscn", "res://temple.tscn"]]
+
+## Spire Canyon's ways out (local), one per area off it. Each of those areas
+## has its entrance in the middle of its edge facing the canyon, so the
+## four side areas sit in a 2 x 2 block north and south of the canyon (two
+## 100 m wide strips each side, 10 m apart) and the temple runs on east.
+const CANYON_EXITS := {
+	"res://caverns.tscn": Vector2(-55.0, -100.0), "res://plateau.tscn": Vector2(55.0, -100.0),
+	"res://swamp.tscn": Vector2(-55.0, 100.0), "res://vigilant.tscn": Vector2(55.0, 100.0),
+	"res://temple.tscn": Vector2(100.0, 0.0),
+}
+## Shipfall Reach's east exit (reach.gd EAST_EXIT, at the area's edge).
+const REACH_EAST := Vector2(125.0, 0.0)
 
 ## Phases of The Clearing and The Escape were solved so each one starts
 ## heading exactly where the previous trail ends (pinned.gd and drag.gd read
@@ -33,6 +49,19 @@ const AREAS := {
 			"z_start": 140.0, "z_end": -170.0},
 	"res://base.tscn": {"name": "Base Camp", "shape": "rect", "rect": Rect2(-85.0, -89.0, 170.0, 170.0)},
 	"res://reach.tscn": {"name": "Shipfall Reach", "shape": "rect", "rect": Rect2(-125.0, -95.0, 250.0, 190.0)},
+	"res://canyon.tscn": {"name": "Spire Canyon", "shape": "rect", "rect": Rect2(-100.0, -100.0, 200.0, 200.0),
+			"entrance": Vector2(-100.0, 0.0),
+			"path": [Vector2(-100.0, 0.0), Vector2(-40.0, 4.0), Vector2(0.0, 0.0), Vector2(60.0, -2.0), Vector2(100.0, 0.0)]},
+	"res://caverns.tscn": {"name": "Glowmire Caverns", "shape": "rect", "rect": Rect2(-50.0, -80.0, 100.0, 160.0),
+			"entrance": Vector2(0.0, 80.0), "path": [Vector2(0.0, 80.0), Vector2(-8.0, 30.0), Vector2(10.0, -20.0), Vector2(0.0, -60.0)]},
+	"res://plateau.tscn": {"name": "Rimefall Plateau", "shape": "rect", "rect": Rect2(-50.0, -80.0, 100.0, 160.0),
+			"entrance": Vector2(0.0, 80.0), "path": [Vector2(0.0, 80.0), Vector2(10.0, 35.0), Vector2(-10.0, -15.0), Vector2(0.0, -60.0)]},
+	"res://swamp.tscn": {"name": "Sunken Mire", "shape": "rect", "rect": Rect2(-50.0, -80.0, 100.0, 160.0),
+			"entrance": Vector2(0.0, -80.0), "path": [Vector2(0.0, -80.0), Vector2(10.0, -30.0), Vector2(-12.0, 20.0), Vector2(0.0, 60.0)]},
+	"res://vigilant.tscn": {"name": "Wreck of the VIGILANT", "shape": "rect", "rect": Rect2(-50.0, -80.0, 100.0, 160.0),
+			"entrance": Vector2(0.0, -80.0), "path": [Vector2(0.0, -80.0), Vector2(0.0, -40.0), Vector2(0.0, 30.0)]},
+	"res://temple.tscn": {"name": "Vaari Temple", "shape": "rect", "rect": Rect2(-85.0, -80.0, 170.0, 160.0),
+			"entrance": Vector2(-85.0, 0.0), "path": [Vector2(-85.0, 0.0), Vector2(-25.0, 0.0), Vector2(35.0, 0.0)]},
 }
 
 ## Lead trails inside the two non-trail areas, so each one visibly runs into
@@ -143,12 +172,18 @@ static func links() -> Array:
 static func exit_to(from: String, to: String) -> Vector2:
 	if from == "res://base.tscn" and to == "res://reach.tscn":
 		return Vector2(BASE_EAST["edge"], BASE_EAST["z_edge"])
+	if from == "res://reach.tscn" and to == "res://canyon.tscn":
+		return REACH_EAST
+	if from == "res://canyon.tscn" and CANYON_EXITS.has(to):
+		return CANYON_EXITS[to]
 	return exit(from)
 
 
 ## Local entrance (where you arrive from the previous area).
 static func entrance(scene: String) -> Vector2:
 	var a: Dictionary = AREAS[scene]
+	if a.has("entrance"):
+		return a["entrance"]
 	if scene == "res://reach.tscn":
 		return Vector2(REACH_LEAD["x0"], 0.0)
 	if scene == "res://base.tscn":
@@ -236,6 +271,10 @@ static func centre_line(scene: String) -> PackedVector2Array:
 	var a: Dictionary = AREAS[scene]
 	var o: Vector2 = offsets()[scene]
 	var pts := PackedVector2Array()
+	if a.has("path"):
+		for q in a["path"]:
+			pts.append(o + q)
+		return pts
 	if scene == "res://reach.tscn":
 		for i in 25:
 			var x: float = lerpf(REACH_LEAD["x0"], REACH_LEAD["x1"], i / 24.0)

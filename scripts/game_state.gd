@@ -309,6 +309,59 @@ static func upgrade(track: String) -> bool:
 	return true
 
 
+# ------------------------------------------------------------ mini drone
+
+## Mini drone upgrades (party menu). Each stat goes to level 5; levels are
+## kept as GS.flags["drone_up:<stat>"].
+const DRONE_UPS := {
+	"damage": {"name": "Charged Bolts", "blurb": "+3 damage per bolt"},
+	"rate":   {"name": "Cooling Fins",  "blurb": "Fires 10% faster"},
+	"range":  {"name": "Long Optics",   "blurb": "+4 m targeting range"},
+}
+const DRONE_UP_MAX := 5
+
+
+static func drone_up(stat: String) -> int:
+	ensure_loaded()
+	return int(flags.get("drone_up:" + stat, 0))
+
+
+static func drone_damage() -> float:
+	return 7.0 + player_level * 0.6 + drone_up("damage") * 3.0
+
+
+static func drone_fire_gap() -> float:
+	return 0.55 * pow(0.9, drone_up("rate"))
+
+
+static func drone_range() -> float:
+	return 24.0 + drone_up("range") * 4.0
+
+
+## Cost of the next level: salvage and tech components.
+static func drone_up_cost(stat: String) -> Dictionary:
+	var l := drone_up(stat)
+	return {"salvage": 40 + 30 * l, "tech": 2 + l}
+
+
+static func can_drone_up(stat: String) -> bool:
+	if drone_up(stat) >= DRONE_UP_MAX:
+		return false
+	var c := drone_up_cost(stat)
+	return salvage >= int(c["salvage"]) and count("tech") >= int(c["tech"])
+
+
+static func buy_drone_up(stat: String) -> bool:
+	if not can_drone_up(stat):
+		return false
+	var c := drone_up_cost(stat)
+	salvage -= int(c["salvage"])
+	remove_item("tech", int(c["tech"]))
+	flags["drone_up:" + stat] = drone_up(stat) + 1
+	changed()
+	return true
+
+
 static func add_salvage(amount: int) -> void:
 	ensure_loaded()
 	salvage += int(round(amount * salvage_mult()))
@@ -399,7 +452,7 @@ static func xp_mult() -> float:
 
 
 static func salvage_mult() -> float:
-	return 1.0 + 0.2 * rank("salvager") + (0.15 if has_mod("salvage_scanner") else 0.0)
+	return 1.0 + 0.2 * rank("salvager") + (0.15 if has_mod("salvage_scanner") else 0.0) + module_bonus("salvage")
 
 
 ## Last Stand: true (and starts the 2 minute cooldown) if it can save you now.
@@ -744,6 +797,8 @@ static func can_learn(id: String) -> bool:
 	var d := skill_def(id)
 	if d.is_empty() or skill_points <= 0 or rank(id) >= int(d["ranks"]):
 		return false
+	if d.get("droid", false) and not droid_online():
+		return false
 	return tier_open(String(d["branch"]), int(d.get("tier", 0)))
 
 
@@ -825,6 +880,10 @@ static func learn(id: String) -> bool:
 static func recipe_unlocked(r: Dictionary) -> bool:
 	if bench_level < int(r.get("bench", 1)):
 		return false
+	if r.has("needs") and not flags.get(String(r["needs"]), false):
+		return false
+	if String(item(r["out"]).get("type", "")) == "droid_arm" and flags.get("owns_arm:" + String(r["out"]), false):
+		return false
 	var sk: String = r.get("skill", "")
 	return sk == "" or rank(sk) > 0
 
@@ -839,7 +898,12 @@ static func craft(r: Dictionary) -> bool:
 		n += 1
 	if rank("pharmacist") > 0 and String(r.get("cat", "")) == "MEDICAL":
 		n += 1
-	add_item(r["out"], n)
+	if String(item(r["out"]).get("type", "")) == "droid_arm":
+		# Droid attachments go on the droid's rack (fit them in the party menu).
+		flags["owns_arm:" + String(r["out"])] = true
+		toast("%s ready: fit it to the droid in the party menu (P)." % String(item(r["out"]).get("name", r["out"])))
+	else:
+		add_item(r["out"], n)
 	flags["crafted:" + String(r["id"])] = true
 	add_xp(12 if rank("tinkerer") > 0 else 6)
 	changed()
@@ -877,12 +941,53 @@ static func _unlock_drone_chain() -> void:
 			and quest_stage < Items.QUESTS.size() and not flags.has("med_stage"):
 		flags.erase("drone_stage")
 	if flags.has("drone_stage"):
+		# Saves that finished the drone missions before the Strider missions
+		# existed pick them up now.
+		if int(flags["drone_stage"]) >= Items.DRONE_QUESTS.size() and not flags.has("strider_stage") \
+				and not flags.get("droid_rebuilt", false):
+			flags["strider_stage"] = 0
+			toast("New quest: %s" % Items.STRIDER_QUESTS[0]["title"])
 		return
 	if med_active():
 		return   # her medical missions come first
 	if quest_stage >= Items.QUESTS.size() or (flags.has("med_stage") and int(flags["med_stage"]) >= Items.MED_QUESTS.size()):
 		flags["drone_stage"] = 0
 		toast("New quest: %s" % Items.DRONE_QUESTS[0]["title"])
+
+
+## The Strider droid: lost until you rebuild one from parts in the Spire
+## Canyon (Items.STRIDER_QUESTS). Its skills, upgrades and the party slot
+## wait until then.
+static func droid_online() -> bool:
+	ensure_loaded()
+	return flags.get("droid_rebuilt", false)
+
+
+## True while the Strider rebuild missions (Items.STRIDER_QUESTS) are under way.
+static func strider_active() -> bool:
+	return flags.has("strider_stage") and int(flags["strider_stage"]) < Items.STRIDER_QUESTS.size()
+
+
+## The droid's fitted arm: "blaster" (its own cannon) or an attachment id.
+static func droid_arm() -> String:
+	ensure_loaded()
+	return String(flags.get("droid_arm", "blaster"))
+
+
+static func set_droid_arm(id: String) -> void:
+	flags["droid_arm"] = id
+	if id != "blaster":
+		flags["fitted:" + id] = true
+	changed()
+
+
+## Attachments you own (crafted ones stay in a rack, not the backpack).
+static func droid_arms() -> Array:
+	var out := ["blaster"]
+	for id in Items.DROID_ARMS:
+		if flags.get("owns_arm:" + id, false):
+			out.append(id)
+	return out
 
 
 ## True while the mini drone missions (Items.DRONE_QUESTS) are under way.
@@ -897,6 +1002,8 @@ static func current_quest() -> Dictionary:
 		return Items.MED_QUESTS[int(flags["med_stage"])]
 	if drone_active():
 		return Items.DRONE_QUESTS[int(flags["drone_stage"])]
+	if strider_active():
+		return Items.STRIDER_QUESTS[int(flags["strider_stage"])]
 	if quest_stage < Items.QUESTS.size():
 		return Items.QUESTS[quest_stage]
 	return {}
@@ -950,6 +1057,11 @@ static func check_quests() -> void:
 			flags["drone_stage"] = 0
 	elif drone_active():
 		flags["drone_stage"] = int(flags["drone_stage"]) + 1
+		# Drone running: the next lead is the canyon east of Shipfall Reach.
+		if int(flags["drone_stage"]) >= Items.DRONE_QUESTS.size() and not flags.has("strider_stage"):
+			flags["strider_stage"] = 0
+	elif strider_active():
+		flags["strider_stage"] = int(flags["strider_stage"]) + 1
 	else:
 		quest_stage += 1
 	toast("QUEST COMPLETE: %s  ·  +%d XP" % [q["title"], Items.QUEST_XP])

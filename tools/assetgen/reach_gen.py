@@ -724,26 +724,177 @@ def ruin_wall():
     return parts
 
 
+def tier_sector(r_in, r_out, y0, y1, a0, a1, seed, chip=0.6, broken=True, frac=1.0):
+    """One ring tier of the dais as a closed solid, from angle a0 to a1.
+    Broken ends get jagged fracture faces (not flat cuts), and the top outer
+    edge is chipped with bites along its length."""
+    full = not broken
+    n = max(6, int((a1 - a0) * 14))
+    bev = 0.07
+    prof = [(r_in, y0), (r_out, y0), (r_out, y1 - bev), (r_out - bev, y1), (r_in + bev, y1), (r_in, y1 - bev)]
+    rc, yc = (r_in + r_out) / 2, (y0 + y1) / 2
+    secs = []
+    for i in range(n + (0 if full else 1)):
+        t = i / n
+        a = a0 + (a1 - a0) * t
+        ring = []
+        for k, (r, y) in enumerate(prof):
+            aa = a
+            if not full and (i == 0 or i == n):
+                # Fracture: each point of the end section breaks off at a different angle.
+                d = noise3(np.array([[r * 2.3 + seed, y * 3.1, i * 0.7]]))[0]
+                aa += (1 if i == 0 else -1) * (0.04 + 0.2 * (d + 0.5)) * frac * (1.4 if y > yc else 0.8) * (1.6 / max(r, 1.6))
+            rr, yy = r, y
+            if chip > 0 and r > rc and y > yc:
+                # Chips bitten out of the top outer edge.
+                b = max(0.0, noise3(np.array([[math.cos(a) * 3.1 + seed, math.sin(a) * 3.1, 3.3]]))[0] - 0.05) * chip
+                rr -= b * 0.9
+                yy -= b * 0.7
+            ring.append((rr * math.cos(aa), yy, rr * math.sin(aa)))
+        secs.append(np.array(ring))
+    if full:
+        secs.append(secs[0])
+    # Faces between neighbouring sections, each turned to face the way its
+    # profile edge faces (the profile runs counter-clockwise in r/y).
+    m = Mesh()
+    K = len(prof)
+    for i in range(len(secs) - 1):
+        A, B = secs[i], secs[i + 1]
+        am = (a0 + (a1 - a0) * (i + 0.5) / n)
+        for k in range(K):
+            k2 = (k + 1) % K
+            dr = prof[k2][0] - prof[k][0]
+            dy = prof[k2][1] - prof[k][1]
+            want = np.array([dy * math.cos(am), -dr, dy * math.sin(am)])
+            for tri3 in ((A[k], A[k2], B[k2]), (A[k], B[k2], B[k])):
+                p0, p1, p2 = (np.asarray(q, float) for q in tri3)
+                nn = np.cross(p1 - p0, p2 - p0)
+                if np.linalg.norm(nn) < 1e-9:
+                    continue
+                if np.dot(nn, want) < 0:
+                    p1, p2 = p2, p1
+                m.tri(p0, p1, p2)
+    if not full:
+        # Jagged fracture caps: fan from a centre pushed out along the break,
+        # so each cap reads as a rough broken face.
+        for end, R in ((0, secs[0]), (1, secs[-1])):
+            a = a0 if end == 0 else a1
+            tang = np.array([-math.sin(a), 0.0, math.cos(a)]) * (-1 if end == 0 else 1)
+            c = R.mean(axis=0) + tang * (0.06 + 0.08 * (noise3(np.array([[seed + end, 1.0, 2.0]]))[0] + 0.5)) * frac
+            # Two rings of fan: a mid ring offset randomly for a craggy surface.
+            mid = []
+            for k in range(len(R)):
+                q = (R[k] + c) / 2
+                q = q + tang * 0.08 * noise3(np.array([[k * 1.7 + seed, end * 3.0, 0.5]]))[0] \
+                      + np.array([0, 1, 0]) * 0.06 * noise3(np.array([[k * 2.9, seed, end]]))[0]
+                mid.append(q)
+            cap = Mesh()
+            K = len(R)
+            for k in range(K):
+                k2 = (k + 1) % K
+                cap.tri(R[k], R[k2], mid[k2]); cap.tri(R[k], mid[k2], mid[k])
+                cap.tri(mid[k], mid[k2], c)
+            # Point every cap face out along the break.
+            for t3 in range(0, len(cap.P), 3):
+                a_, b_, c_ = cap.P[t3:t3 + 3]
+                nn = np.cross(b_ - a_, c_ - a_)
+                if np.dot(nn, tang) < 0:
+                    cap.P[t3 + 1], cap.P[t3 + 2] = cap.P[t3 + 2], cap.P[t3 + 1]
+            m.extend(cap)
+    m = jitter(m, 0.05, 1.4, None, seed)
+    m = jitter(m, 0.02, 4.5, None, seed + 9)
+    flat_normals(m)
+    return m
+
+
+def rubble_chunk(size, seed):
+    """A broken lump of the same stone: a rough convex chunk with sharp faces."""
+    r = np.random.default_rng(int(seed * 1000) % 2**31)
+    pts = []
+    for _ in range(14):
+        v = r.normal(size=3)
+        v /= np.linalg.norm(v)
+        pts.append(v * size * np.array([r.uniform(0.7, 1.3), r.uniform(0.4, 0.9), r.uniform(0.7, 1.2)]))
+    m = hull_of(pts)
+    m = jitter(m, size * 0.12, 3.0 / max(size, 0.05), None, seed)
+    flat_normals(m)
+    return m
+
+
 def ruin_dais():
+    """The old Vaari fountain: a stepped round platform with a crystal heart.
+    Its outer tiers have broken away in places. The breaks are real fracture
+    faces, the rims are chipped, and the pieces that fell lie around it."""
     parts = {"stone": [], "crystal": [], "glow": []}
-    prof = [(0.0, 0.0), (5.2, 0.0), (5.2, 0.35), (4.4, 0.35), (4.4, 0.7), (3.5, 0.7), (3.5, 1.05), (2.2, 1.05),
-            (2.2, 1.12), (0.0, 1.12)]
-    d = lathe(prof, 36, axis='y', flat=True)
-    outward_from(d, lambda f: np.array([0.0, f[1], 0.0]))
-    d = jitter(d, 0.09, 1.2, lambda p: 1.0 if p[1] > 0.05 else 0.3, 2.0)
-    flat_normals(d)
-    # Cut a few chunks out of the outer step (crumbled).
-    d = filt(d, lambda c: not (np.hypot(c[0], c[2]) > 4.5 and noise3(np.array([c * 0.7]))[0] > 0.32))
-    parts["stone"].append(d)
+    # Base slab under everything (so nothing floats where tiers broke away).
+    base = tier_sector(0.0, 4.9, -0.25, 0.08, 0.0, 2 * math.pi, 1.0, chip=0.0, broken=False)
+    parts["stone"].append(base)
+    # Outer tier: two big sections, with gaps where it crumbled.
+    gaps_outer = [(0.55, 1.35), (3.6, 4.15)]
+    segs = [(1.35, 3.6 + 0.0), (4.15, 0.55 + 2 * math.pi)]
+    for i, (a0, a1) in enumerate(segs):
+        parts["stone"].append(tier_sector(4.35, 5.2, 0.0, 0.35, a0, a1, 10.0 + i, chip=1.1))
+    # Middle tier: one break, overlapping the outer one.
+    parts["stone"].append(tier_sector(3.45, 4.45, 0.3, 0.7, 1.05, 1.05 + 2 * math.pi - 0.55, 20.0, chip=1.0))
+    # Upper tier and the top: whole, but chipped.
+    parts["stone"].append(tier_sector(2.15, 3.55, 0.65, 1.05, 0.0, 2 * math.pi, 30.0, chip=0.8, broken=False))
+    top = lathe([(0.0, 1.12), (2.25, 1.12), (2.25, 0.95)], 36, axis='y', flat=True)
+    outward_from(top, lambda f: np.array([0.0, 0.6, 0.0]))
+    top = jitter(top, 0.03, 2.0, lambda p: 1.0 if np.hypot(p[0], p[2]) > 1.0 else 0.2, 31.0)
+    flat_normals(top)
+    parts["stone"].append(top)
     # Carved ring channel on the top tier that the crystal light runs along.
     ring = lathe([(1.7, 1.125), (1.95, 1.125)], 36, axis='z', flat=True)
-    ring.transform(rotx(-math.pi / 2)); ring.transform(None, (0, 0, 0))
+    ring.transform(rotx(-math.pi / 2))
     ring.P = [np.array([p[0], 1.125, p[2]]) for p in ring.P]
     outward_from(ring, lambda f: np.array([f[0], 0.0, f[2]]))
     parts["glow"].append(ring)
-    # Four low standing stones round the edge.
+    # The fallen pieces: big slabs where each gap is, smaller chunks and grit around.
+    r = np.random.default_rng(66)
+    for gi, (g0, g1) in enumerate(gaps_outer + [(0.5, 1.05)]):
+        n_big = 3 if gi < 2 else 2
+        for k in range(n_big + 6):
+            a = r.uniform(g0, g1)
+            big = k < n_big
+            dist = r.uniform(5.0, 6.6) if gi < 2 else r.uniform(4.2, 5.6)
+            size = r.uniform(0.35, 0.6) if big else r.uniform(0.08, 0.22)
+            ch = rubble_chunk(size, 70 + gi * 10 + k)
+            ch.transform(rotx(r.uniform(-0.6, 0.6)) @ roty(r.uniform(0, 6.3)) @ rotz(r.uniform(-0.6, 0.6)),
+                         (math.cos(a) * dist, size * 0.45 - 0.02, math.sin(a) * dist))
+            parts["stone"].append(ch)
+    # Whole sections that broke off and tipped over, lying in front of each gap.
+    for gi, (g0, g1) in enumerate(gaps_outer):
+        a = (g0 + g1) / 2 + 0.05
+        frag = tier_sector(4.35, 5.2, 0.0, 0.35, a - 0.2, a + 0.2, 40.0 + gi, chip=0.6, frac=0.35)
+        cen = np.array([math.cos(a) * 4.78, 0.17, math.sin(a) * 4.78])
+        frag.transform(None, -cen)
+        out = np.array([math.cos(a), 0.0, math.sin(a)])
+        tilt = align_y(np.array([0.0, 1.0, 0.0]) + out * 0.55 + np.array([-out[2], 0, out[0]]) * 0.3)
+        frag.transform(tilt, cen + out * 1.05 + np.array([0, 0.12, 0]))
+        flat_normals(frag)
+        parts["stone"].append(frag)
+    # Grit scattered round the whole base.
+    for k in range(26):
+        a = r.uniform(0, 2 * math.pi)
+        dist = r.uniform(5.2, 7.0)
+        size = r.uniform(0.04, 0.11)
+        ch = rubble_chunk(size, 200 + k)
+        ch.transform(roty(r.uniform(0, 6.3)), (math.cos(a) * dist, size * 0.35, math.sin(a) * dist))
+        parts["stone"].append(ch)
+    # Four low standing stones round the edge; one has snapped and fallen.
     for k in range(4):
         a = k * math.pi / 2 + 0.4
+        if k == 1:
+            st = stone_column(2.0, 0.32, 8, 12.0, crystal=False, broken_at=0.9)
+            stub = st["stone"]
+            for m in stub:
+                m.transform(None, (math.cos(a) * 4.0, 0.62, math.sin(a) * 4.0))
+                parts["stone"].append(m)
+            fall = stone_column(1.3, 0.3, 8, 13.0, crystal=False, broken_at=1.1)
+            for m in fall["stone"]:
+                m.transform(rotz(math.pi / 2) @ roty(0.5), (math.cos(a) * 5.9, 0.3, math.sin(a) * 5.9))
+                parts["stone"].append(m)
+            continue
         st = stone_column(1.6 + rng.random() * 0.6, 0.32, 8, 10 + k, crystal=False)
         for m in st["stone"]:
             m.transform(None, (math.cos(a) * 4.0, 0.62, math.sin(a) * 4.0))

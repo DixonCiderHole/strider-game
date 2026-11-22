@@ -42,7 +42,7 @@ func _ready() -> void:
 	_light.light_energy = 0.0
 	_light.omni_range = 3.0
 	add_child(_light)
-	damage = 7.0 + GS.player_level * 0.6
+	damage = GS.drone_damage()
 	if player != null:
 		global_position = player.global_position + Vector3(0.8, 2.2, 0.6)
 
@@ -54,6 +54,7 @@ func _process(delta: float) -> void:
 	_time += delta
 	_cd -= delta
 	_think -= delta
+	damage = GS.drone_damage()
 	_light.light_energy = move_toward(_light.light_energy, 0.0, delta * 30.0)
 	# Hover beside your right shoulder, a little behind.
 	var fy: float = player._facing_yaw
@@ -81,7 +82,7 @@ func _alive(e) -> bool:
 
 func _pick_target():
 	var best = null
-	var bd := RANGE * RANGE
+	var bd := GS.drone_range() * GS.drone_range()
 	var space := get_world_3d().direct_space_state
 	for e in get_tree().get_nodes_in_group("enemy"):
 		if not _alive(e):
@@ -101,7 +102,7 @@ func _fire() -> void:
 	if not _alive(_target):
 		_target = null
 		return
-	_cd = FIRE_GAP * randf_range(0.85, 1.15)
+	_cd = GS.drone_fire_gap() * randf_range(0.85, 1.15)
 	var gun: Vector3 = GUNS[_gun % GUNS.size()]
 	_gun += 1
 	var from := global_transform * (Basis(Vector3.UP, -PI * 0.5) * (gun * (SIZE / 1.9)))

@@ -216,7 +216,9 @@ func _continue() -> void:
 
 func _area_name(scene: String) -> String:
 	return {"res://main.tscn": "CRASH SITE", "res://path.tscn": "THE TRAIL", "res://pinned.tscn": "PINNED",
-		"res://drag.tscn": "ESCAPE", "res://base.tscn": "BASE CAMP", "res://reach.tscn": "SHIPFALL REACH"}.get(scene, "")
+		"res://drag.tscn": "ESCAPE", "res://base.tscn": "BASE CAMP", "res://reach.tscn": "SHIPFALL REACH",
+		"res://canyon.tscn": "SPIRE CANYON", "res://caverns.tscn": "GLOWMIRE CAVERNS", "res://plateau.tscn": "RIMEFALL PLATEAU",
+		"res://swamp.tscn": "SUNKEN MIRE", "res://vigilant.tscn": "THE VIGILANT", "res://temple.tscn": "VAARI TEMPLE"}.get(scene, "")
 
 
 func _start_horde() -> void:
@@ -296,9 +298,28 @@ func _unhandled_input(event) -> void:
 		GS.save()
 		get_tree().change_scene_to_file("res://reach.tscn")
 		return
+	# Testing (editor only): F9 starts a brand-new game in save slot 5 with
+	# every earlier mission done and the Strider missions started, at the
+	# west end of Spire Canyon, with a level 2 bench.
+	if OS.has_feature("editor") and event is InputEventKey and event.pressed and not event.echo and event.physical_keycode == KEY_F9:
+		GS.horde_mode = false
+		GS.use_slot(5)
+		GS.reset()
+		GS.reached_base = true
+		GS.quest_stage = 1
+		GS.flags["med_stage"] = 4
+		GS.flags["drone_stage"] = 3
+		GS.flags["drone_installed"] = true
+		GS.flags["strider_stage"] = 0
+		GS.bench_level = 2
+		GS.flags["came_from"] = "res://reach.tscn"
+		GS.save()
+		get_tree().change_scene_to_file("res://canyon.tscn")
+		return
 	# Testing: F2 cycles the night backdrop through every area.
 	if event is InputEventKey and event.pressed and not event.echo and event.physical_keycode == KEY_F2:
-		var areas := ["res://main.tscn", "res://path.tscn", "res://pinned.tscn", "res://drag.tscn", "res://base.tscn", "res://reach.tscn"]
+		var areas := ["res://main.tscn", "res://path.tscn", "res://pinned.tscn", "res://drag.tscn", "res://base.tscn", "res://reach.tscn",
+			"res://canyon.tscn", "res://caverns.tscn", "res://plateau.tscn", "res://swamp.tscn", "res://vigilant.tscn", "res://temple.tscn"]
 		var i := areas.find(_backdrop.scene_file_path) if _backdrop != null else -1
 		if _backdrop != null:
 			_backdrop.queue_free()

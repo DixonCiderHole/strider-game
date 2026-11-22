@@ -58,6 +58,11 @@ func _ready() -> void:
 	_title = UI.label("FABRICATION BENCH", 30, UI.ACCENT)
 	_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	head.add_child(_title)
+	var scrap_btn := UI.button("SCRAP GEAR", 200)
+	scrap_btn.alignment = HORIZONTAL_ALIGNMENT_CENTER
+	scrap_btn.custom_minimum_size.y = 42
+	scrap_btn.pressed.connect(_open_scrap)
+	head.add_child(scrap_btn)
 	var close_btn := UI.button("CLOSE  (Esc)", 200)
 	close_btn.alignment = HORIZONTAL_ALIGNMENT_CENTER
 	close_btn.custom_minimum_size.y = 42
@@ -188,6 +193,16 @@ func _ready() -> void:
 
 func _exit_tree() -> void:
 	GS.listeners.erase(_refresh)
+
+
+var _scrap_panel
+
+## Scrapping spare gear (scripts/scrap_panel.gd), over the bench screen.
+func _open_scrap() -> void:
+	if _scrap_panel == null:
+		_scrap_panel = load("res://scripts/scrap_panel.gd").new()
+		add_child(_scrap_panel)
+	_scrap_panel.open()
 
 
 func _rule() -> ColorRect:

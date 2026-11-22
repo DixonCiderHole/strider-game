@@ -35,6 +35,7 @@ const WorldMap = preload("res://scripts/world_map.gd")
 
 const SELF := "res://reach.tscn"
 const BASE := "res://base.tscn"
+const CANYON := "res://canyon.tscn"
 const KIT := "res://models/reach_kit.glb"
 const PROPS_GLB := "res://models/camp_props.glb"
 const ROCK_SCENES := ["res://demo/assets/models/RockA.tscn", "res://demo/assets/models/RockB.tscn", "res://demo/assets/models/RockC.tscn"]
@@ -55,7 +56,10 @@ const PADS := [[Vector3(-78.0, 0.0, 10.0), 9.0], [Vector3(-59.0, 0.0, -50.0), 12
 	[Vector3(52.0, 0.0, 66.0), 8.0]]
 ## Worn foot paths (polylines): camp to the ford, and on from the far bank to the ruins.
 const PATHS := [[Vector3(-78.0, 0.0, 10.0), Vector3(-40.0, 0.0, 5.0), Vector3(-17.0, 0.0, 2.0)],
-	[Vector3(-2.0, 0.0, -2.0), Vector3(25.0, 0.0, -12.0), Vector3(52.0, 0.0, -21.0)]]
+	[Vector3(-2.0, 0.0, -2.0), Vector3(25.0, 0.0, -12.0), Vector3(52.0, 0.0, -21.0)],
+	[Vector3(52.0, 0.0, -21.0), Vector3(86.0, 0.0, -8.0), Vector3(104.0, 0.0, -1.0), Vector3(125.0, 0.0, 0.0)]]
+## The east gap in the hills: the way into Spire Canyon (world_map.gd).
+const EAST_EXIT := Vector3(118.0, 0.0, 0.0)
 ## Creature packs: [centre, how many]. All dormant until you get close.
 const PACKS := [[Vector3(-30.0, 0.0, -60.0), 3], [Vector3(6.0, 0.0, -62.0), 2], [Vector3(-64.0, 0.0, -36.0), 2],
 	[Vector3(70.0, 0.0, -30.0), 3], [Vector3(50.0, 0.0, -12.0), 2], [Vector3(88.0, 0.0, -22.0), 2],
@@ -81,6 +85,7 @@ var _fade: ColorRect
 var _respawning := false
 var _medkit_at := Vector3.ZERO
 var _exit_at := Vector3.ZERO
+var _east_at := Vector3.ZERO
 var _caches: Array = []         # [{pos, lid, it, light, opened}]
 var _wet := false
 var _lamps: Array = []
@@ -165,6 +170,8 @@ func _height_at(x: float, z: float) -> float:
 	var gap := 1.0
 	if x < -90.0:
 		gap = smoothstep(5.0, 16.0, WorldMap.reach_lead_dist(x, z))
+	elif x > 90.0:
+		gap = smoothstep(5.0, 16.0, absf(z - EAST_EXIT.z))
 	h += smoothstep(-8.0, 30.0, out + _noise_hill.get_noise_2d(x * 2.0, z * 2.0) * 8.0) \
 			* (13.0 + 16.0 * (0.5 + 0.5 * _noise_hill.get_noise_2d(x, z))) * gap
 	h = maxf(h, 0.15)
@@ -277,6 +284,10 @@ func _ready() -> void:
 	var sx := -117.0
 	var start := _on_ground(sx, WorldMap.reach_lead_z(sx), 0.1)
 	var yaw := -PI * 0.5   # facing east
+	if GS.flags.get("came_from", "") == CANYON and not at_camp:
+		start = _on_ground(EAST_EXIT.x - 4.0, EAST_EXIT.z, 0.1)
+		yaw = PI * 0.5     # facing west, back into the Reach
+	GS.flags.erase("came_from")
 	if at_camp:
 		start = _on_ground(CAMP.x + 3.0, CAMP.z + 4.5, 0.1)
 		yaw = -PI * 0.4
@@ -295,12 +306,13 @@ func _ready() -> void:
 	player.died.connect(_on_player_died)
 	player.water_at = func(_p: Vector3) -> float: return WATER_Y
 
-	droid = CompanionScript.new()
-	droid.name = "Droid"
-	droid.player = player
-	droid.damage = GS.droid_damage()
-	droid.position = start + Vector3(-2.0, 0.5, 2.0)
-	add_child(droid)
+	if GS.droid_online():
+		droid = CompanionScript.new()
+		droid.name = "Droid"
+		droid.player = player
+		droid.damage = GS.droid_damage()
+		droid.position = start + Vector3(-2.0, 0.5, 2.0)
+		add_child(droid)
 
 	menu = PauseMenuScript.new()
 	menu.player = player
@@ -1281,12 +1293,20 @@ func _build_exit() -> void:
 	_add_interact(_exit_at + Vector3(0.0, 1.0, 0.0), "Head west to Base Camp", func():
 		GS.flags["came_from"] = SELF
 		get_tree().change_scene_to_file(BASE))
+	# East: the gap in the hills into Spire Canyon.
+	_east_at = _on_ground(EAST_EXIT.x, EAST_EXIT.z)
+	_rocks(_east_at, [[Vector3(0.6, 0.0, -4.4), 0.85], [Vector3(-0.4, 0.0, 4.6), 0.8], [Vector3(2.2, 0.0, -6.0), 0.6]], 35)
+	_beacon(_east_at + Vector3(-1.0, 0.0, 2.6), 0.8)
+	_add_interact(_east_at + Vector3(0.0, 1.0, 0.0), "Go east into Spire Canyon", func():
+		GS.flags["came_from"] = SELF
+		get_tree().change_scene_to_file(CANYON))
 
 
 func _build_map_points() -> void:
 	MapPoi.add(self, CAMP, "Waypoint Camp", "camp",
 			"Her pathfinder unit's last camp before the ambush: a collapsed lean-to, a cold fire and a field med kit for cooking coagulant and studying samples.")
 	MapPoi.add(self, _exit_at, "Trail to Base Camp", "exit", "The trail west, back over the hills to Base Camp.")
+	MapPoi.add(self, _east_at, "Way to Spire Canyon", "exit", "A gap in the eastern hills. Beyond it the ground drops into a deep canyon full of waterfalls.")
 	MapPoi.add(self, Vector3(-30.0, 0.0, -60.0), "Orla's Promise", "landmark",
 			"A bulk hauler that broke in two on the way down. The nose lies west of the river, the engines east. You can walk into both halves.")
 	MapPoi.add(self, DAIS, "Vaari Ruins", "danger",
@@ -1304,6 +1324,11 @@ func _quest_target():
 	if q.is_empty():
 		return null
 	if not GS.med_active():
+		if GS.strider_active() and not GS.drone_active():
+			for g in q["goals"]:
+				if GS.goal_done(g[0]):
+					continue
+				return _exit_at if String(g[0]).begins_with("crafted:") else _east_at
 		if GS.drone_active():
 			for g in q["goals"]:
 				if GS.goal_done(g[0]):

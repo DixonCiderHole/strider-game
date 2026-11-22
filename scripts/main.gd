@@ -53,7 +53,11 @@ var horde := false
 var creatures_killed := 0
 var _on_field := 0
 const HORDE_MAX_ON_FIELD := 14
-const HORDE_SALVAGE_PER_KILL := 3
+const HORDE_SALVAGE_PER_KILL := 6
+## Every 5 waves cleared in the horde: a salvage cache, and (the first time)
+## gear you can only earn here.
+const HORDE_MILESTONE_EVERY := 5
+const HORDE_EXCLUSIVES := {5: "mod_hordebreaker", 10: "mod_bulwark", 15: "mod_scavenger", 20: "mod_relentless"}
 var _time := 0.0
 
 
@@ -112,7 +116,7 @@ func _ready() -> void:
 	add_child(overlay)
 	_build_salvage()
 
-	if DROID_FROM_START:
+	if DROID_FROM_START and GS.droid_online():
 		_spawn_droid()
 	if GS.ally_joined:
 		var ally = AllyScript.new()
@@ -239,9 +243,11 @@ func _spawn_enemy() -> void:
 		e.speed += minf(wave_index * 0.45, 4.0)
 		e.health += wave_index * 12.0
 		e.attack_damage += minf(wave_index * 0.8, 12.0)
+		e.elite_chance = minf(0.08 + wave_index * 0.012, 0.3)
 	else:
 		e.speed += wave_index * 0.7
 		e.health += wave_index * 10.0
+		e.elite_chance = 0.06 if GS.reached_base else 0.0
 	_on_field += 1
 	e.target = player
 	add_child(e)
@@ -257,7 +263,9 @@ func _on_enemy_died() -> void:
 		return
 	if horde:
 		player.heal(25.0)
-		if droid == null:
+		if (wave_index + 1) % HORDE_MILESTONE_EVERY == 0:
+			_horde_milestone(wave_index + 1)
+		if droid == null and GS.droid_online():
 			hud.show_message("Wave %d cleared.\nSomething in the wreckage is powering up..." % (wave_index + 1), 3.0)
 			Sfx.ui("wave_clear", -6.0)
 			await get_tree().create_timer(2.0, false).timeout
@@ -271,7 +279,7 @@ func _on_enemy_died() -> void:
 		return
 	if wave_index + 1 < WAVES.size():
 		player.heal(35.0)
-		if droid == null:
+		if droid == null and GS.droid_online():
 			hud.show_message("Wave cleared.\nSomething in the wreckage is powering up...", 3.5)
 			Sfx.ui("wave_clear", -6.0)
 			await get_tree().create_timer(2.5, false).timeout
@@ -282,6 +290,20 @@ func _on_enemy_died() -> void:
 			Sfx.ui("wave_clear", -6.0)
 			await get_tree().create_timer(6.0, false).timeout
 	_next_wave()
+
+
+func _horde_milestone(w: int) -> void:
+	var cache := 20 * w
+	GS.add_salvage(cache)
+	GS.add_item("tech", 2 + w / 5)
+	var msg := "WAVE %d MILESTONE  ·  +%d salvage, +%d tech" % [w, cache, 2 + w / 5]
+	var ex: String = HORDE_EXCLUSIVES.get(w, "")
+	if ex != "" and not GS.flags.get("horde_reward:" + ex, false):
+		GS.flags["horde_reward:" + ex] = true
+		GS.add_item(ex, 1)
+		msg += "\nHORDE EXCLUSIVE: %s" % String(GS.item(ex).get("name", ex))
+	GS.toast(msg)
+	GS.changed()
 
 
 func _spawn_droid() -> void:

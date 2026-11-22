@@ -74,9 +74,11 @@ static func ui(sound: String, volume_db := 0.0, pitch_var := 0.0) -> void:
 	p.pitch_scale = randf_range(1.0 - pitch_var, 1.0 + pitch_var)
 	p.process_mode = Node.PROCESS_MODE_ALWAYS
 	p.bus = "SFX"
-	tree.root.add_child(p)
-	p.play()
 	p.finished.connect(p.queue_free)
+	# Deferred: the root may be busy adding a new scene (sounds played from
+	# _ready). Autoplay starts it as soon as it's in.
+	p.autoplay = true
+	tree.root.add_child.call_deferred(p)
 
 
 ## A looping sound attached to `parent` (3D if parent is a Node3D).

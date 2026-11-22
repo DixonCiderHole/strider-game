@@ -39,7 +39,7 @@ const V2_ANIMS := {
 	"crouch_idle": "crouch_idle", "crouch_fwd": "crouch_forward", "crouch_back": "crouch_back", "crouch_left": "crouch_left",
 	"prone_idle": "prone_idle", "prone_fwd": "prone_forward", "prone_back": "prone_back",
 	"prone_turn_left": "prone_turn_left", "prone_turn_right": "prone_turn_right", "prone_fire": "prone_fire",
-	"swim_idle": "swim_idle", "swim_fwd": "swim_fwd",
+	"swim_idle": "swim_idle", "swim_fwd": "swim_fwd", "throw": "throw",
 }
 const ANIM_FILES := {
 	"run": "res://models/anim_run.fbx",
@@ -59,7 +59,7 @@ const LOOPING := ["idle", "run", "fire", "walk_fwd", "walk_back", "walk_left", "
 		"crouch_idle", "crouch_fwd", "crouch_back", "crouch_left",
 		"prone_idle", "prone_fwd", "prone_back", "prone_turn_left", "prone_turn_right", "prone_fire",
 		"swim_idle", "swim_fwd"]
-const NO_ROOT_MOTION := ["idle", "run", "fire", "walk_fwd", "walk_back", "walk_left", "walk_right", "hit",
+const NO_ROOT_MOTION := ["idle", "run", "fire", "walk_fwd", "walk_back", "walk_left", "walk_right", "hit", "throw",
 		"crouch_idle", "crouch_fwd", "crouch_back", "crouch_left",
 		"prone_idle", "prone_fwd", "prone_back", "prone_turn_left", "prone_turn_right", "prone_fire",
 		"swim_idle", "swim_fwd"]
@@ -604,11 +604,35 @@ func _build_tree(inst: Node3D, skel_path: String) -> void:
 
 	bt.connect_node("aim_blend", 0, base_out)
 	bt.connect_node("aim_blend", 1, "fire")
-	bt.connect_node("hit_shot", 0, "aim_blend")
+	var before_hit := "aim_blend"
+	# Grenade throw: upper body only, so you can throw on the move.
+	_has_throw = anim.has_animation("throw")
+	if _has_throw:
+		var th := AnimationNodeAnimation.new()
+		th.animation = "throw"
+		bt.add_node("throw", th)
+		var ts := AnimationNodeTimeScale.new()
+		bt.add_node("throw_speed", ts)
+		bt.connect_node("throw_speed", 0, "throw")
+		var tshot := AnimationNodeOneShot.new()
+		tshot.fadein_time = 0.1
+		tshot.fadeout_time = 0.2
+		tshot.filter_enabled = true
+		for i in skeleton.get_bone_count():
+			var bone := skeleton.get_bone_name(i)
+			if _is_upper_body(bone):
+				tshot.set_filter_path(NodePath(skel_path + ":" + bone), true)
+		bt.add_node("throw_shot", tshot)
+		bt.connect_node("throw_shot", 0, "aim_blend")
+		bt.connect_node("throw_shot", 1, "throw_speed")
+		before_hit = "throw_shot"
+	bt.connect_node("hit_shot", 0, before_hit)
 	bt.connect_node("hit_shot", 1, "hit")
 	bt.connect_node("output", 0, "hit_shot")
 	tree.tree_root = bt
 	tree.active = true
+	if _has_throw:
+		tree.set("parameters/throw_speed/scale", THROW_SPEED)
 
 	# We advance the animation ourselves each frame, then twist the spine,
 	# so the twist is always applied on top of the animated pose.
@@ -696,11 +720,12 @@ func _load_blaster() -> void:
 	_rifle_model = Node3D.new()
 	gun.add_child(_rifle_model)
 	_pistol_model = Node3D.new()
-	_pistol_model.visible = false
+	_pistol_model.visible = weapon == "sidearm"
+	_rifle_model.visible = weapon != "sidearm"
 	gun.add_child(_pistol_model)
 	_mount_weapons()
 	muzzle = Node3D.new()
-	muzzle.position = _rifle_muzzle
+	muzzle.position = _muzzles.get(weapon, _rifle_muzzle)
 	gun.add_child(muzzle)
 	muzzle_light = OmniLight3D.new()
 	muzzle_light.light_color = Color(1.0, 0.25, 0.2)
@@ -998,19 +1023,74 @@ func _throw_grenade() -> void:
 	if slot == "":
 		GS.toast("No grenade equipped (Esc → INVENTORY, equip to a utility slot).")
 		return
+	if _throw_t > 0.0:
+		return
 	GS.remove_item(slot, 1)
+	if _has_throw and tree != null:
+		# Wind up with the grenade in hand, let go part-way through the throw.
+		tree.set("parameters/throw_shot/request", AnimationNodeOneShot.ONE_SHOT_REQUEST_FIRE)
+		var length := anim.get_animation("throw").length / THROW_SPEED
+		_throw_t = length
+		_held_grenade = _grenade_model(slot)
+		get_parent().add_child(_held_grenade)
+		get_tree().create_timer(length * THROW_RELEASE).timeout.connect(_release_grenade.bind(slot))
+	else:
+		_release_grenade(slot)
+
+
+## Where in the throw animation (0-1) the grenade leaves the hand, and how
+## much faster than recorded it plays (Mixamo "Toss Grenade", 3.2 s).
+const THROW_RELEASE := 0.58
+const THROW_SPEED := 1.6
+const GRENADE_MODELS := {"grenade": "Frag", "flashbang": "Flashbang", "smoke_grenade": "Smoke",
+		"stun_grenade": "Stun", "thermal": "Thermal"}
+var _has_throw := false
+var _throw_t := 0.0
+var _held_grenade: Node3D
+
+## The grenade's model from models/grenades.glb (1.4x so it reads in the hand).
+func _grenade_model(id: String) -> Node3D:
+	var holder := Node3D.new()
+	var path := "res://models/grenades.glb"
+	if ResourceLoader.exists(path):
+		var scn: Node3D = load(path).instantiate()
+		var src := scn.find_child(String(GRENADE_MODELS.get(id, "Frag")), true, false) as Node3D
+		if src != null:
+			src.get_parent().remove_child(src)
+			src.transform = Transform3D.IDENTITY
+			src.scale = Vector3.ONE * 1.4
+			holder.add_child(src)
+		scn.free()
+	if holder.get_child_count() == 0:
+		var g := MeshInstance3D.new()
+		var sm := SphereMesh.new()
+		sm.radius = 0.08
+		sm.height = 0.16
+		g.mesh = sm
+		g.material_override = U.mat(Color(0.25, 0.3, 0.2), 0.6, Color(1.0, 0.3, 0.1), 1.5)
+		holder.add_child(g)
+	return holder
+
+
+func _release_grenade(slot: String) -> void:
+	if is_dead or not is_inside_tree():
+		if _held_grenade != null and is_instance_valid(_held_grenade):
+			_held_grenade.queue_free()
+		_held_grenade = null
+		return
 	var it := GS.item(slot)
 	var from := global_position + Vector3.UP * 1.5
 	var to := _aim_point if _has_aim_point else from - cam_yaw.global_transform.basis.z * 15.0
 	if from.distance_to(to) > 22.0:
 		to = from + (to - from).normalized() * 22.0
-	var g := MeshInstance3D.new()
-	var sm := SphereMesh.new()
-	sm.radius = 0.08
-	sm.height = 0.16
-	g.mesh = sm
-	g.material_override = U.mat(Color(0.25, 0.3, 0.2), 0.6, Color(1.0, 0.3, 0.1), 1.5)
-	get_parent().add_child(g)
+	var g: Node3D
+	if _held_grenade != null and is_instance_valid(_held_grenade):
+		g = _held_grenade
+		from = g.global_position
+		_held_grenade = null
+	else:
+		g = _grenade_model(slot)
+		get_parent().add_child(g)
 	g.global_position = from
 	var tw := g.create_tween()
 	var dur := 0.25 + from.distance_to(to) * 0.04
@@ -1022,6 +1102,8 @@ func _throw_grenade() -> void:
 
 func _grenade_arc(t: float, g: Node3D, from: Vector3, to: Vector3) -> void:
 	g.global_position = from.lerp(to, t) + Vector3.UP * sin(t * PI) * 2.5
+	# Tumbles end over end in flight.
+	g.rotation = Vector3(t * 14.0, t * 3.0, 0.0)
 
 
 func _grenade_boom(g: Node3D, dmg: float, radius: float, effect := "frag") -> void:
@@ -1085,8 +1167,13 @@ func _process(delta: float) -> void:
 		model.position.y = -0.82 * _seat_amount + 0.16 * _sleep_amount + (SWIM_LIFT * _swim_amount * _swim_move if _has_swim else 0.0)
 		# Lying on your back: tip the whole body over backwards.
 		model.rotation.x = deg_to_rad(90.0) * _sleep_amount
+	if _throw_t > 0.0:
+		_throw_t -= delta
 	if gun != null:
-		gun.visible = _sleep_amount < 0.4 and _swim_amount < 0.4
+		gun.visible = _sleep_amount < 0.4 and _swim_amount < 0.4 and _throw_t <= 0.0
+	if _held_grenade != null and is_instance_valid(_held_grenade):
+		_held_grenade.global_position = _palm(_hand_r, _hand_r2) if (_rigged and _hand_r >= 0) \
+				else global_position + Vector3.UP * 1.5
 	if cam_yaw != null:
 		# Seated: camera up over her shoulder, looking down past you.
 		cam_yaw.position.y = 1.55 + (-0.45 if pinned else 0.45) * _seat_amount - 0.5 * _crouch_amount - 0.95 * _prone_amount

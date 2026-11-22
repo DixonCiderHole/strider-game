@@ -10,6 +10,7 @@ const SettingsPanel = preload("res://scripts/settings_panel.gd")
 const PlayerScript = preload("res://scripts/player.gd")
 const AllyScript = preload("res://scripts/ally.gd")
 const CompanionScript = preload("res://scripts/companion.gd")
+const Sfx = preload("res://scripts/sfx.gd")
 const MAIN_MENU := "res://main_menu.tscn"
 const TABS := ["PARTY", "INVENTORY", "MAP", "SKILLS", "QUESTS", "SYSTEM"]
 
@@ -579,6 +580,7 @@ func _portrait(id: String) -> Control:
 				var su = PlayerScript.new()
 				su.display_only = true
 				su.character = "survivor"
+				su.weapon = player.weapon if player != null and is_instance_valid(player) else "primary"
 				face.add_child(su)
 			else:
 				face.add_child(AllyScript.new())
@@ -587,7 +589,16 @@ func _portrait(id: String) -> Control:
 			d.display_only = true
 			face.add_child(d)
 			look_y = 0.6
-	var cam_pos := Vector3(0.0, look_y + 0.1, 4.4 if id != "droid" else 3.6)
+		"drone":
+			# The mini drone, hovering over the disc (model used as-is).
+			if ResourceLoader.exists("res://models/companion_drone.glb"):
+				var dm2: Node3D = load("res://models/companion_drone.glb").instantiate()
+				dm2.scale = Vector3.ONE * (0.9 / 1.9)
+				dm2.rotation.y = -PI * 0.5
+				dm2.position.y = 0.6
+				face.add_child(dm2)
+			look_y = 0.6
+	var cam_pos := Vector3(0.0, look_y + 0.1, 4.4 if not (id in ["droid", "drone"]) else (3.6 if id == "droid" else 2.2))
 	cam.transform = Transform3D(Basis.looking_at(Vector3(0.0, look_y, 0.0) - cam_pos), cam_pos)
 	cam.current = true
 	vp.add_child(cam)
@@ -725,13 +736,84 @@ func _refresh_party() -> void:
 		]))
 	var d = scene.get_node_or_null("Droid") if scene != null else null
 	var sd := GS.party_stats("droid")
-	_party_box.add_child(_member_column("droid", "STRIDER DROID", "Companion  ·  Combat droid", int(sd["level"]), int(sd["xp"]),
-			d.health if d != null else 100.0, d.max_health if d != null else 100.0, [
-		["WEAPON", "Twin blasters"],
-		["DAMAGE / BOLT", "%d  (bursts of 4)" % int(GS.droid_damage() * 0.6)],
-		["ORDERS", d.order_text() if d != null else "Not deployed here"],
-	]))
+	if GS.droid_online():
+		var col := _member_column("droid", "STRIDER DROID", "Companion  ·  Combat droid", int(sd["level"]), int(sd["xp"]),
+				d.health if d != null else 100.0, d.max_health if d != null else 100.0, [
+			["WEAPON", "Twin blasters" if GS.droid_arm() == "blaster" else "Blaster + " + String(Items.DROID_ARMS.get(GS.droid_arm(), {}).get("name", "attachment"))],
+			["DAMAGE / BOLT", "%d  (bursts of 4)" % int(GS.droid_damage() * 0.6)],
+			["ORDERS", d.order_text() if d != null else "Not deployed here"],
+		])
+		_party_box.add_child(col)
+		_add_arm_picker(col)
+	if GS.flags.get("drone_installed", false):
+		_party_box.add_child(_drone_column())
 	_set_party_rendering(_tab == "PARTY")
+
+
+## ARM: swap the droid's right-arm attachment (cannon or a tool arm).
+func _add_arm_picker(col: Control) -> void:
+	var v: VBoxContainer = col.get_child(0)
+	v.add_child(UI.label("RIGHT ARM", 15, UI.MUTED))
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 6)
+	v.add_child(row)
+	for id in GS.droid_arms():
+		var nm := "CANNON" if id == "blaster" else String(Items.DROID_ARMS[id]["name"]).to_upper()
+		var b := UI.button(nm, 140)
+		b.alignment = HORIZONTAL_ALIGNMENT_CENTER
+		b.custom_minimum_size.y = 34
+		b.disabled = GS.droid_arm() == id
+		b.tooltip_text = "The droid's own blaster cannon." if id == "blaster" else String(Items.DROID_ARMS[id]["does"])
+		b.pressed.connect(func():
+			GS.set_droid_arm(id)
+			var scn := get_tree().current_scene
+			var dd = scn.get_node_or_null("Droid") if scn != null else null
+			if dd != null and dd.has_method("refresh_arm"):
+				dd.refresh_arm()
+			Sfx.ui("upgrade", -6.0)
+			_refresh_party())
+		row.add_child(b)
+
+
+## The mini drone: its stats and the upgrades you can buy for it.
+func _drone_column() -> Control:
+	var p := PanelContainer.new()
+	var st := UI.box(Color(0.07, 0.07, 0.09, 0.92), Color(0.3, 0.3, 0.35, 0.6), 1, 6)
+	st.content_margin_left = 12
+	st.content_margin_right = 12
+	st.content_margin_top = 12
+	st.content_margin_bottom = 12
+	p.add_theme_stylebox_override("panel", st)
+	var v := UI.vbox(6)
+	v.custom_minimum_size = Vector2(290, 0)
+	p.add_child(v)
+	v.add_child(UI.label("MINI DRONE", 24, UI.TEXT))
+	v.add_child(UI.label("Companion  ·  Shoulder gunship", 15, UI.ACCENT))
+	v.add_child(_portrait("drone"))
+	v.add_child(_stat_row("DAMAGE / BOLT", str(int(GS.drone_damage()))))
+	v.add_child(_stat_row("SHOTS / SEC", "%.1f" % (1.0 / GS.drone_fire_gap())))
+	v.add_child(_stat_row("RANGE", "%d m" % int(GS.drone_range())))
+	v.add_child(_stat_row("YOUR SALVAGE / TECH", "%d  /  %d" % [GS.salvage, GS.count("tech")]))
+	for stat in GS.DRONE_UPS:
+		var d: Dictionary = GS.DRONE_UPS[stat]
+		var lvl := GS.drone_up(stat)
+		var row := UI.vbox(2)
+		row.add_child(_stat_row("%s  (%s)" % [String(d["name"]).to_upper(), d["blurb"]], "Lv %d / %d" % [lvl, GS.DRONE_UP_MAX]))
+		var txt := "MAXED"
+		if lvl < GS.DRONE_UP_MAX:
+			var c := GS.drone_up_cost(stat)
+			txt = "UPGRADE  ·  %d salvage + %d tech" % [int(c["salvage"]), int(c["tech"])]
+		var b := UI.button(txt, 290)
+		b.custom_minimum_size.y = 34
+		b.alignment = HORIZONTAL_ALIGNMENT_CENTER
+		b.disabled = not GS.can_drone_up(stat)
+		b.pressed.connect(func():
+			if GS.buy_drone_up(stat):
+				Sfx.ui("upgrade", -4.0)
+				_refresh_party())
+		row.add_child(b)
+		v.add_child(row)
+	return p
 
 
 # ---------------------------------------------------------------- MAP
@@ -748,6 +830,12 @@ const AREA_NAMES := {
 	"res://drag.tscn": "THE ESCAPE",
 	"res://base.tscn": "BASE CAMP",
 	"res://reach.tscn": "SHIPFALL REACH",
+	"res://canyon.tscn": "SPIRE CANYON",
+	"res://caverns.tscn": "GLOWMIRE CAVERNS",
+	"res://plateau.tscn": "RIMEFALL PLATEAU",
+	"res://swamp.tscn": "SUNKEN MIRE",
+	"res://vigilant.tscn": "WRECK OF THE VIGILANT",
+	"res://temple.tscn": "VAARI TEMPLE",
 }
 var _map_zoom := 1
 ## WORLD: every area on one map; LOCAL: the top-down view of this area.
@@ -1185,6 +1273,8 @@ func _skill_tile(sk: Dictionary, open: bool) -> Control:
 	b.alignment = HORIZONTAL_ALIGNMENT_LEFT
 	b.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	b.text = "%s   %d/%d\n%s" % [sk["name"], r, int(sk["ranks"]), sk["desc"]]
+	if sk.get("droid", false) and not GS.droid_online():
+		b.text += "\n(Rebuild the droid first)"
 	b.add_theme_font_size_override("font_size", 14)
 	var bg := Color(0.07, 0.07, 0.09, 0.95)
 	var border := Color(0.25, 0.25, 0.3)

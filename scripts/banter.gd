@@ -74,7 +74,7 @@ const TOPICS := {
 			["YOU", "They told us the Coalition couldn't hold a line. That you'd scatter at the first shot."],
 			["ILSA", "They told us you shoot your own wounded to save rations."],
 			["YOU", "...We don't."],
-			["ILSA", "I know. I've watched you share yours with the droid. It doesn't even eat."],
+			["ILSA", "I know. I've watched you slip me the bigger half of every ration bar when you think I'm not looking."],
 		]},
 		{"id": "s1_home", "stage": 1, "lines": [
 			["YOU", "Where are you from? Before the Coalition."],

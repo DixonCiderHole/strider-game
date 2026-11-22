@@ -33,6 +33,8 @@ var party_id := "droid"
 var party_name := "STRIDER DROID"
 var max_health := 100.0
 var health := 100.0
+## Knocked out in a fight (see revive_point.gd).
+var is_dead := false
 ## Shown in a menu portrait only: just idles, no AI, no party bars.
 var display_only := false
 var player
@@ -87,6 +89,10 @@ func _ready() -> void:
 		talk.who = "droid"
 		talk.member = self
 		add_child(talk)
+		var rv = load("res://scripts/revive_point.gd").new()
+		rv.name = "Revive"
+		rv.member = self
+		add_child(rv)
 	var cs := CollisionShape3D.new()
 	var cap := CapsuleShape3D.new()
 	cap.radius = 0.55
@@ -118,6 +124,7 @@ func _ready() -> void:
 		mi.material_override = U.mat(Color(0.2, 0.22, 0.25), 0.4)
 		holder.add_child(mi)
 
+	refresh_arm()
 	var box := U.collect_aabb(visual)
 	_eye = OmniLight3D.new()
 	_eye.light_color = BOLT_COLOR
@@ -150,6 +157,129 @@ func _collect_parts(inst: Node3D) -> void:
 			"side": 1.0 if arm_name == "Arm_L" else -1.0,
 			"rot": Quaternion.IDENTITY, "recoil": 0.0,
 		})
+
+
+# ------------------------------------------------------------ arm attachments
+
+## The right arm socket: its own cannon, or a tool arm (GS.droid_arm()).
+## With the saw fitted the droid wades in and cuts instead of keeping its
+## distance; the left cannon keeps firing.
+const ARMS_GLB := "res://models/droid_arms.glb"
+const SAW_RANGE := 2.3
+const SAW_GAP := 0.32
+var _arm_r: Dictionary = {}
+var _arm_r_mesh: Mesh
+var _saw: Node3D
+var _saw_blade: Node3D
+var _saw_spin := 0.0
+var _saw_cd := 0.0
+var _cutting := false
+var _sparks: GPUParticles3D
+
+
+func has_saw() -> bool:
+	return _saw != null
+
+
+func refresh_arm() -> void:
+	if _arm_r.is_empty():
+		for a in _arms:
+			if a["side"] < 0.0:
+				_arm_r = a
+	if _arm_r.is_empty():
+		return
+	var node: Node3D = _arm_r["node"]
+	if _saw != null:
+		_saw.queue_free()
+		_saw = null
+		_saw_blade = null
+	var want := GS.droid_arm()
+	if node is MeshInstance3D and _arm_r_mesh == null:
+		_arm_r_mesh = (node as MeshInstance3D).mesh
+	if want == "saw_arm" and ResourceLoader.exists(ARMS_GLB):
+		# Cannon off, saw arm into the socket (built in metres: undo the model scale).
+		if node is MeshInstance3D:
+			(node as MeshInstance3D).mesh = null
+		var lib: Node3D = load(ARMS_GLB).instantiate()
+		var src := lib.find_child("SawArm", true, false) as Node3D
+		if src != null:
+			src.get_parent().remove_child(src)
+			src.owner = null
+			var k := 1.0 / maxf(node.global_transform.basis.get_scale().x, 0.0001) if node.is_inside_tree() else 1.0 / maxf(_model_root.scale.x, 0.0001)
+			src.transform = Transform3D.IDENTITY.scaled(Vector3.ONE * k)
+			node.add_child(src)
+			_saw = src
+			_saw_blade = src.find_child("SawBlade", true, false) as Node3D
+		lib.free()
+		if _sparks == null:
+			_sparks = _make_sparks()
+	else:
+		if node is MeshInstance3D and _arm_r_mesh != null:
+			(node as MeshInstance3D).mesh = _arm_r_mesh
+
+
+func _make_sparks() -> GPUParticles3D:
+	var p := GPUParticles3D.new()
+	var pm := ParticleProcessMaterial.new()
+	pm.direction = Vector3(0, 1, 0)
+	pm.spread = 70.0
+	pm.initial_velocity_min = 3.0
+	pm.initial_velocity_max = 7.0
+	pm.gravity = Vector3(0, -12, 0)
+	pm.scale_min = 0.03
+	pm.scale_max = 0.06
+	p.process_material = pm
+	var q := SphereMesh.new()
+	q.radius = 0.5
+	q.height = 1.0
+	q.radial_segments = 4
+	q.rings = 2
+	var m := StandardMaterial3D.new()
+	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	m.albedo_color = Color(1.0, 0.7, 0.3)
+	m.emission_enabled = true
+	m.emission = Color(1.0, 0.55, 0.2)
+	q.material = m
+	p.draw_pass_1 = q
+	p.amount = 60
+	p.lifetime = 0.5
+	p.emitting = false
+	p.top_level = true
+	add_child(p)
+	return p
+
+
+## Sparks and a spinning blade while the saw bites into something at `at`.
+func set_cutting(on: bool, at := Vector3.ZERO) -> void:
+	_cutting = on
+	if _sparks != null:
+		_sparks.emitting = on
+		if on:
+			_sparks.global_position = at
+
+
+func _saw_process(delta: float) -> void:
+	if _saw_blade == null:
+		return
+	var fast := _cutting or (_target != null and global_position.distance_to(_target.global_position) < SAW_RANGE + 1.5)
+	_saw_spin = move_toward(_saw_spin, 40.0 if fast else 6.0, delta * 60.0)
+	_saw_blade.rotate_x(_saw_spin * delta)
+	_saw_cd -= delta
+	if _target == null or not _valid_enemy(_target) or _saw_cd > 0.0:
+		if not _cutting and _sparks != null:
+			_sparks.emitting = false
+		return
+	var d := global_position.distance_to(_target.global_position)
+	if d > SAW_RANGE:
+		if not _cutting and _sparks != null:
+			_sparks.emitting = false
+		return
+	_saw_cd = SAW_GAP
+	_target.take_damage(damage * 1.1, (_target.global_position - global_position).normalized())
+	if _sparks != null:
+		_sparks.global_position = _target.global_position + Vector3.UP * 1.0
+		_sparks.emitting = true
+	Sfx.at(global_position + Vector3.UP, "impact", -8.0, 0.25, 6.0, 0.15)
 
 
 # ------------------------------------------------------------ orders
@@ -213,11 +343,28 @@ func _physics_process(delta: float) -> void:
 	if display_only:
 		velocity = Vector3.ZERO
 		_animate(delta)
+		if _saw_blade != null:
+			_saw_blade.rotate_x(6.0 * delta)
 		return
 	if not is_on_floor():
 		velocity.y -= gravity * delta
 	if player == null or not is_instance_valid(player):
 		return
+	if is_dead:
+		# Knocked out: slumped where it fell until someone gets it going.
+		_target = null
+		velocity.x = move_toward(velocity.x, 0.0, 10.0 * delta)
+		velocity.z = move_toward(velocity.z, 0.0, 10.0 * delta)
+		move_and_slide()
+		if visual != null:
+			visual.rotation.z = lerpf(visual.rotation.z, 0.5, clampf(4.0 * delta, 0.0, 1.0))
+			visual.position.y = lerpf(visual.position.y, -0.35, clampf(4.0 * delta, 0.0, 1.0))
+		if _eye != null:
+			_eye.light_energy = 0.0
+		return
+	elif visual != null and absf(visual.rotation.z) > 0.001:
+		visual.rotation.z = lerpf(visual.rotation.z, 0.0, clampf(4.0 * delta, 0.0, 1.0))
+		visual.position.y = lerpf(visual.position.y, 0.0, clampf(4.0 * delta, 0.0, 1.0))
 
 	if order == Order.ATTACK and not _valid_enemy(focus_target):
 		order = Order.FOLLOW
@@ -270,7 +417,10 @@ func _physics_process(delta: float) -> void:
 		if order == Order.HOLD:
 			strafe *= 0.4   # holding: only small shuffles
 		desired += strafe
-		if dist < 5.0:
+		if _saw != null and order != Order.HOLD:
+			# Saw fitted: close in and cut instead of keeping distance.
+			desired = t_dir * speed * 1.2 if dist > SAW_RANGE - 0.4 else Vector3.ZERO
+		elif dist < 5.0:
 			desired -= t_dir * speed * 0.8
 		if desired.length() > speed * 1.6:
 			desired = desired.normalized() * speed * 1.6
@@ -298,6 +448,7 @@ func _physics_process(delta: float) -> void:
 	_cd -= delta
 	if _target != null and _cd <= 0.0:
 		_try_fire(_target)
+	_saw_process(delta)
 
 
 func _valid_enemy(e) -> bool:
@@ -345,7 +496,7 @@ func _try_fire(target) -> void:
 	for i in _arms.size():
 		var arm: Dictionary = _arms[(_next_arm + i) % _arms.size()]
 		var m: Node3D = arm["muzzle"]
-		if m == null:
+		if m == null or (_saw != null and arm == _arm_r):
 			continue
 		var node: Node3D = arm["node"]
 		var barrel_dir := (m.global_position - node.global_position).normalized()
@@ -478,3 +629,19 @@ func _spawn_marker(pos: Vector3) -> void:
 	var tw := ring.create_tween()
 	tw.tween_property(m, "albedo_color:a", 0.0, 1.5)
 	tw.tween_callback(ring.queue_free)
+
+
+func take_damage(amount: float, _dir := Vector3.ZERO) -> void:
+	if is_dead or display_only:
+		return
+	health = maxf(health - amount, 0.0)
+	if health <= 0.0:
+		is_dead = true
+		_target = null
+		Sfx.at(global_position + Vector3.UP, "droid_blaster", -6.0, 0.3, 8.0)
+		GS.toast("The droid is down! Get to it and hold E.")
+
+
+func revive(frac: float) -> void:
+	is_dead = false
+	health = max_health * frac

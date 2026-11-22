@@ -226,6 +226,34 @@ only automatically.
   Tissue Samples, Bring It Home. Studying the tissue shows the creatures'
   crystal threads grow "in neat, even rows": another hint that they're made.
 
+## Spire Canyon *(proposed name)*: east of Shipfall Reach
+
+- A deep canyon of terraced cliffs and waterfalls, the hub for five places.
+- **The VIGILANT** *(proposed)*: an Ascendancy cruiser escorting the K-7
+  advance teams. A spire pulse killed its drives while it was dropping supply
+  pods; it broke apart on the plateau south of the canyon. One of its blast
+  bulkheads came down across the canyon's east fork.
+- **The Strider:** pod 14 of the VIGILANT's drop held a Strider escort unit
+  meant for K-7. The pod landed on a shelf of the canyon's north wall. The
+  droid's legs and arms were torn off and carried into the four side areas
+  (the Vaari take machines as well as people). The player rebuilds it at the
+  pod's repair cradle, and it imprints on him. Later he fits it with a plasma
+  saw arm to cut through the bulkhead.
+- **Side areas** (each with a guardian, an upgraded creature with crystal
+  growths): Glowmire Caverns (fungal gorge; Glowmire Broodmother; empty
+  crystal-thread husks), Rimefall Plateau (frozen tundra; Rimefall Stalker;
+  a Coalition relay repeating fleet command's "do not land" order), Sunken
+  Mire (drowned forest; Mire Matriarch; Vaari root cages; an ORLA'S PROMISE
+  escape pod), the wreck of the VIGILANT (hangar two; Hangar Brute).
+- **The Vaari temple** past the bulkhead: a stepped pyramid and a temple cut
+  into the cliff. Inside: a carving of ships falling and helmeted figures led
+  under the spires, a holding room of empty stone cradles (a K-7 tally
+  scratched into one), and a sanctum with a pulsing crystal heart that the
+  helmet comm clicks along with. Hints only: the facility itself is still to
+  come.
+- Logs: `scripts/lore.gd` (drop_manifest, canyon_*, caverns_*, plateau_*,
+  swamp_*, vigilant_*, temple_*).
+
 ## Existing content to align later
 
 - **Datapads and logs** (`scripts/lore.gd`): the HALCYON transmission, K-7

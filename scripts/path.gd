@@ -136,15 +136,16 @@ func _ready() -> void:
 	player.cam_yaw.rotation.y = atan2(-t.x, -t.z)
 	player._facing_yaw = player.cam_yaw.rotation.y
 
-	droid = CompanionScript.new()
-	droid.name = "Droid"
-	droid.player = player
-	droid.damage = GS.droid_damage()
-	droid.position = start + path_normal(start_z) * 2.5 + Vector3(0.0, 0.5, 2.0)
-	add_child(droid)
-	droid.status_changed.connect(hud.set_droid_status)
-	hud.show_droid(true)
-	hud.set_droid_status(droid.order_text(), droid.weapons_free)
+	if GS.droid_online():
+		droid = CompanionScript.new()
+		droid.name = "Droid"
+		droid.player = player
+		droid.damage = GS.droid_damage()
+		droid.position = start + path_normal(start_z) * 2.5 + Vector3(0.0, 0.5, 2.0)
+		add_child(droid)
+		droid.status_changed.connect(hud.set_droid_status)
+		hud.show_droid(true)
+		hud.set_droid_status(droid.order_text(), droid.weapons_free)
 
 	menu = PauseMenuScript.new()
 	menu.player = player
