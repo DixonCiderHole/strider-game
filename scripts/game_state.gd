@@ -138,8 +138,11 @@ static var slot := 0   # 0 = not picked yet (uses the last one played)
 static var backpack: Array = []
 ## Equipment slots -> item id ("" = empty).
 static var equipment := {"primary": "rifle", "sidearm": "pistol", "utility1": "", "utility2": "", "module1": "", "module2": "", "module3": ""}
-## Shots left in the rifle magazine.
+## Shots left in the equipped primary weapon's magazine. Other primaries keep
+## theirs in `mags` (by item id) while they're not equipped.
 static var mag := MAG_SIZE
+static var mags := {}
+static var _mag_for := ""
 static var player_level := 1
 static var xp := 0
 static var skill_points := 0
@@ -178,6 +181,8 @@ static func ensure_loaded() -> void:
 	backpack = cf.get_value("rpg", "backpack", [])
 	equipment = cf.get_value("rpg", "equipment", equipment)
 	mag = cf.get_value("rpg", "mag", MAG_SIZE)
+	mags = cf.get_value("rpg", "mags", {})
+	_mag_for = String(equipment.get("primary", ""))
 	player_level = cf.get_value("rpg", "level", 1)
 	xp = cf.get_value("rpg", "xp", 0)
 	skill_points = cf.get_value("rpg", "skill_points", 0)
@@ -229,6 +234,8 @@ static func _clear() -> void:
 	backpack = []
 	equipment = {"primary": "rifle", "sidearm": "pistol", "utility1": "", "utility2": "", "module1": "", "module2": "", "module3": ""}
 	mag = MAG_SIZE
+	mags = {}
+	_mag_for = "rifle"
 	player_level = 1
 	xp = 0
 	skill_points = 0
@@ -257,6 +264,7 @@ static func save() -> void:
 	cf.set_value("rpg", "backpack", backpack)
 	cf.set_value("rpg", "equipment", equipment)
 	cf.set_value("rpg", "mag", mag)
+	cf.set_value("rpg", "mags", mags)
 	cf.set_value("rpg", "level", player_level)
 	cf.set_value("rpg", "xp", xp)
 	cf.set_value("rpg", "skill_points", skill_points)
@@ -321,7 +329,7 @@ static func stat_at(track: String, lvl: int) -> float:
 
 static func player_damage() -> float:
 	return stat_at("blaster", level("blaster")) * (1.0 + 0.1 * rank("steady_aim") + 0.015 * attr("mastery")
-		+ 0.01 * attr("power") + module_bonus("damage"))
+		+ 0.01 * attr("power") + module_bonus("damage") + 0.08 * rank("anatomy"))
 
 
 static func player_max_health() -> float:
@@ -341,7 +349,8 @@ static func ally_damage_mult() -> float:
 # ---------------------------------------------------------------- combat stats
 
 static func crit_chance() -> float:
-	return minf(0.05 + 0.01 * attr("critical") + 0.03 * rank("deadeye") + (0.08 if has_mod("targeting_optic") else 0.0), 0.75)
+	return minf(0.05 + 0.01 * attr("critical") + 0.03 * rank("deadeye") + (0.08 if has_mod("targeting_optic") else 0.0)
+		+ module_bonus("crit"), 0.75)
 
 
 static func crit_mult() -> float:
@@ -349,11 +358,11 @@ static func crit_mult() -> float:
 
 
 static func fire_rate_mult() -> float:
-	return 1.0 + 0.02 * attr("alacrity") + 0.08 * rank("rapid_fire") + (0.15 if has_mod("coil_accel") else 0.0)
+	return 1.0 + 0.02 * attr("alacrity") + 0.08 * rank("rapid_fire") + (0.15 if has_mod("coil_accel") else 0.0) + module_bonus("rate")
 
 
 static func reload_time_mult() -> float:
-	return (0.6 if rank("quick_hands") > 0 else 1.0) / (1.0 + 0.03 * attr("alacrity"))
+	return (0.6 if rank("quick_hands") > 0 else 1.0) / (1.0 + 0.03 * attr("alacrity") + module_bonus("reload"))
 
 
 static func evade_chance() -> float:
@@ -368,12 +377,13 @@ const BLOCK_ABSORB := 0.4
 
 
 static func damage_taken_mult() -> float:
-	return 1.0 - 0.05 * rank("thick_skin") - (0.12 if has_mod("reactive_plating") else 0.0)
+	return maxf(0.3, 1.0 - 0.05 * rank("thick_skin") - (0.12 if has_mod("reactive_plating") else 0.0) - module_bonus("armor"))
 
 
 ## Health/s regenerated once you've gone 5 s without being hit.
 static func regen_rate() -> float:
-	return 0.15 * attr("endurance") + 1.5 * rank("second_wind") + (2.0 if has_mod("nano_weave") else 0.0)
+	return 0.15 * attr("endurance") + 1.5 * rank("second_wind") + (2.0 if has_mod("nano_weave") else 0.0) \
+		+ module_bonus("regen") + 0.75 * rank("regenerative")
 
 
 static func grenade_mult() -> float:
@@ -414,6 +424,17 @@ static func _fix_backpack() -> void:
 			equipment[k] = ""
 
 
+## A party member's equipped gear: yours if it's who you're playing, else
+## what they had on when you last switched (their starting kit if never).
+static func equipment_of(id: String) -> Dictionary:
+	ensure_loaded()
+	if id == active_member:
+		return equipment
+	if profiles.has(id):
+		return profiles[id].get("equipment", {})
+	return {"primary": "rifle", "sidearm": "pistol" if id == "trooper" else ""}
+
+
 ## Switches who you're playing. Stores the current character's progress and
 ## loads the other's (a fresh one the first time: the survivor starts at her
 ## party level with a rifle and a medic's kit).
@@ -422,7 +443,7 @@ static func switch_member(id: String) -> void:
 	if id == active_member:
 		return
 	profiles[active_member] = {
-		"backpack": backpack.duplicate(true), "equipment": equipment.duplicate(true), "mag": mag,
+		"backpack": backpack.duplicate(true), "equipment": equipment.duplicate(true), "mag": mag, "mags": mags.duplicate(),
 		"player_level": player_level, "xp": xp, "skill_points": skill_points, "skills": skills.duplicate(true),
 		"attr_points": attr_points, "attributes": attributes.duplicate(true),
 	}
@@ -431,6 +452,7 @@ static func switch_member(id: String) -> void:
 		backpack = (p.get("backpack", []) as Array).duplicate(true)
 		equipment = (p.get("equipment", {}) as Dictionary).duplicate(true)
 		mag = int(p.get("mag", MAG_SIZE))
+		mags = (p.get("mags", {}) as Dictionary).duplicate()
 		player_level = int(p.get("player_level", 1))
 		xp = int(p.get("xp", 0))
 		skill_points = int(p.get("skill_points", 0))
@@ -443,6 +465,7 @@ static func switch_member(id: String) -> void:
 		backpack = []
 		equipment = {"primary": "rifle", "sidearm": "", "utility1": "", "utility2": "", "module1": "", "module2": "", "module3": ""}
 		mag = MAG_SIZE
+		mags = {}
 		player_level = lv
 		xp = 0
 		skill_points = lv - 1
@@ -454,6 +477,7 @@ static func switch_member(id: String) -> void:
 		add_item("bandage", 4, false)
 		add_item("ration", 2, false)
 	active_member = id
+	_mag_for = String(equipment.get("primary", ""))
 	_fix_backpack()
 	changed()
 	save()
@@ -595,12 +619,82 @@ static func module_bonus(key: String) -> float:
 	return total * (1.0 + 0.25 * rank("overclock"))
 
 
-static func mag_size() -> int:
-	return MAG_SIZE + 5 * rank("extended_mag") + int(module_bonus("mag")) + (10 if has_mod("extended_cell") else 0)
+## Magazine size of a weapon (default: the equipped primary). Fuel tanks
+## don't get the magazine bonuses.
+static func mag_size(id := "") -> int:
+	if id == "":
+		id = String(equipment.get("primary", "rifle"))
+	var it := item(id)
+	var base := int(it.get("mag", MAG_SIZE))
+	if String(it.get("ammo", "cartridge")) == "fuel":
+		return base
+	return base + 5 * rank("extended_mag") + int(module_bonus("mag")) + (10 if has_mod("extended_cell") else 0)
+
+
+## The ammo item the equipped primary reloads with.
+static func ammo_item(id := "") -> String:
+	if id == "":
+		id = String(equipment.get("primary", "rifle"))
+	return String(item(id).get("ammo", "cartridge"))
+
+
+## Keeps `mag` with the primary it belongs to when you swap primaries.
+static func sync_mag() -> void:
+	var id := String(equipment.get("primary", ""))
+	if id == _mag_for:
+		return
+	if _mag_for != "":
+		mags[_mag_for] = mag
+	mag = int(mags.get(id, mag_size(id))) if id != "" else 0
+	_mag_for = id
 
 
 static func heal_amount(id: String) -> float:
-	return float(item(id).get("heal", 0.0)) * (1.5 if rank("field_medic") > 0 else 1.0)
+	return float(item(id).get("heal", 0.0)) * ((1.5 if rank("field_medic") > 0 else 1.0) + 0.15 * rank("triage"))
+
+
+static var _second_chance_at := -1000.0
+static var _injector_at := -1000.0
+
+## Second Chance (Medic): uses up your best healing item to survive a killing
+## blow. Returns true if it did.
+static func try_second_chance() -> bool:
+	if rank("second_chance") <= 0:
+		return false
+	var now := Time.get_ticks_msec() / 1000.0
+	if now - _second_chance_at < 180.0:
+		return false
+	var best := best_heal_item()
+	if best == "":
+		return false
+	remove_item(best, 1)
+	_second_chance_at = now
+	return true
+
+
+## Auto-Injector (Medic): the best healing item to use now, or "" if it's not
+## ready (once every 45 s).
+static func auto_injector_item() -> String:
+	if rank("auto_injector") <= 0:
+		return ""
+	var now := Time.get_ticks_msec() / 1000.0
+	if now - _injector_at < 45.0:
+		return ""
+	var best := best_heal_item()
+	if best != "":
+		_injector_at = now
+	return best
+
+
+static func best_heal_item() -> String:
+	var best := ""
+	var amt := 0.0
+	for id in Items.ITEMS:
+		var h := float(Items.ITEMS[id].get("heal", 0.0))
+		if h > amt and count(id) > 0:
+			amt = h
+			best = id
+	return best
 
 
 # ================================================================ xp & skills
@@ -743,6 +837,8 @@ static func craft(r: Dictionary) -> bool:
 		n += 1
 	if rank("master_crafter") > 0 and item(r["out"]).get("type", "") in ["consumable", "ammo", "utility"]:
 		n += 1
+	if rank("pharmacist") > 0 and String(r.get("cat", "")) == "MEDICAL":
+		n += 1
 	add_item(r["out"], n)
 	flags["crafted:" + String(r["id"])] = true
 	add_xp(12 if rank("tinkerer") > 0 else 6)
@@ -765,8 +861,42 @@ static func upgrade_bench() -> bool:
 
 # ================================================================ quests
 
+## True while her medical missions (Items.MED_QUESTS) are under way and
+## you're playing as her. They run ahead of the camp missions.
+static func med_active() -> bool:
+	return flags.has("med_stage") and int(flags["med_stage"]) < Items.MED_QUESTS.size() and active_member == "survivor"
+
+
+## The drone missions open once the camp missions are done (or once her
+## medical missions are, whichever comes first), so whoever you play gets a
+## reason to head out to Shipfall Reach.
+static func _unlock_drone_chain() -> void:
+	# Saves that opened it early (before "Check On Him" existed) and haven't
+	# touched it yet go back to the camp missions first.
+	if int(flags.get("drone_stage", -1)) == 0 and not flags.get("found_drone", false) \
+			and quest_stage < Items.QUESTS.size() and not flags.has("med_stage"):
+		flags.erase("drone_stage")
+	if flags.has("drone_stage"):
+		return
+	if med_active():
+		return   # her medical missions come first
+	if quest_stage >= Items.QUESTS.size() or (flags.has("med_stage") and int(flags["med_stage"]) >= Items.MED_QUESTS.size()):
+		flags["drone_stage"] = 0
+		toast("New quest: %s" % Items.DRONE_QUESTS[0]["title"])
+
+
+## True while the mini drone missions (Items.DRONE_QUESTS) are under way.
+static func drone_active() -> bool:
+	return flags.has("drone_stage") and int(flags["drone_stage"]) < Items.DRONE_QUESTS.size()
+
+
 static func current_quest() -> Dictionary:
 	ensure_loaded()
+	_unlock_drone_chain()
+	if med_active():
+		return Items.MED_QUESTS[int(flags["med_stage"])]
+	if drone_active():
+		return Items.DRONE_QUESTS[int(flags["drone_stage"])]
 	if quest_stage < Items.QUESTS.size():
 		return Items.QUESTS[quest_stage]
 	return {}
@@ -786,6 +916,9 @@ static func goal_done(g: String) -> bool:
 			return bench_level >= int(parts[1])
 		"crafted":
 			return flags.get(g, false)
+		"checked_on_him":
+			# Only while you're playing her and he's on the cot; otherwise skip it.
+			return flags.get(g, false) or not (active_member == "survivor" and flags.get("survivor_section", false))
 		_:
 			return flags.get(g, false)
 
@@ -810,7 +943,15 @@ static func check_quests() -> void:
 			all = false
 	if not all:
 		return
-	quest_stage += 1
+	if med_active():
+		flags["med_stage"] = int(flags["med_stage"]) + 1
+		# Her missions done: the drone's signal turns up.
+		if int(flags["med_stage"]) >= Items.MED_QUESTS.size() and not flags.has("drone_stage"):
+			flags["drone_stage"] = 0
+	elif drone_active():
+		flags["drone_stage"] = int(flags["drone_stage"]) + 1
+	else:
+		quest_stage += 1
 	toast("QUEST COMPLETE: %s  ·  +%d XP" % [q["title"], Items.QUEST_XP])
 	add_xp(Items.QUEST_XP)
 	var nq := current_quest()
@@ -826,6 +967,7 @@ static func toast(text: String) -> void:
 
 
 static func changed() -> void:
+	sync_mag()
 	check_quests_deferred()
 	save()
 	for cb in listeners.duplicate():

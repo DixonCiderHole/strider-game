@@ -15,6 +15,14 @@ const ITEMS := {
 		"desc": "Tough plant fibre, stripped from bushes and ferns."},
 	"ore":     {"name": "Ore", "type": "resource", "stack": 50, "color": Color(0.6, 0.35, 0.25), "tag": "ORE",
 		"desc": "Raw metal ore. Loose stones on the ground, or mined from veins with a pick."},
+	"glowcap": {"name": "Glowcap", "type": "resource", "stack": 30, "color": Color(0.6, 1.0, 0.4), "tag": "GLW",
+		"desc": "A riverbank herb whose bulbs glow at dusk. Cooked down, the sap sets like resin: a field coagulant."},
+	"medpack": {"name": "Pathfinder Med Pack", "type": "resource", "stack": 5, "color": Color(0.95, 0.5, 0.15), "tag": "MED",
+		"desc": "Coalition pathfinder medical pack: sutures, dressings, antiseptic and a cracked rack of vials."},
+	"tissue":  {"name": "Creature Tissue Sample", "type": "resource", "stack": 10, "color": Color(0.35, 0.8, 1.0), "tag": "TIS",
+		"desc": "A sealed vial with a sliver of spine and muscle. It flinches from light, long after the creature is dead."},
+	"crystal": {"name": "Spire Crystal", "type": "resource", "stack": 30, "color": Color(0.35, 0.85, 1.0), "tag": "CRY",
+		"desc": "A shard of the glowing crystal that grows through the spires and the Vaari stones. Hums faintly. Mined from crystal clusters with a pick."},
 	"tech":    {"name": "Tech Components", "type": "resource", "stack": 30, "color": Color(0.3, 0.7, 0.95), "tag": "TEC",
 		"desc": "Circuit boards, wiring and power cells from supply crates."},
 	# Consumables
@@ -22,16 +30,46 @@ const ITEMS := {
 		"heal": 30.0, "desc": "Restores 30 health. Quick use: H."},
 	"stim":    {"name": "Medical Stim", "type": "consumable", "stack": 5, "color": Color(0.95, 0.3, 0.35), "tag": "STM",
 		"heal": 80.0, "desc": "Restores 80 health instantly."},
+	"coagulant": {"name": "Glowcap Coagulant", "type": "consumable", "stack": 10, "color": Color(0.55, 0.95, 0.5), "tag": "COA",
+		"heal": 55.0, "desc": "Glowcap sap cooked down to a resin. Seals a wound fast. Restores 55 health."},
+	"trauma_kit": {"name": "Trauma Kit", "type": "consumable", "stack": 5, "color": Color(0.95, 0.95, 0.95), "tag": "TRK",
+		"heal": 120.0, "desc": "Coalition-pattern trauma kit: coagulant, sutures and a pressure dressing. Restores 120 health."},
+	"antivenom": {"name": "Antivenom Shot", "type": "consumable", "stack": 5, "color": Color(0.4, 0.9, 0.85), "tag": "AVN",
+		"heal": 45.0, "desc": "Her counter to the creatures' bite, made from what the tissue samples taught her. Restores 45 health."},
 	"ration":  {"name": "Military Ration", "type": "consumable", "stack": 10, "color": Color(0.6, 0.6, 0.35), "tag": "RTN",
 		"heal": 15.0, "desc": "Sealed field ration. Restores 15 health. Found in supply crates."},
 	# Ammo
 	"cartridge": {"name": "Blaster Cartridge", "type": "ammo", "stack": 20, "color": Color(1.0, 0.55, 0.2), "tag": "AMO",
-		"shots": 30, "desc": "Power cartridge for the blaster rifle: one full magazine (30 shots). Reload: R."},
+		"shots": 30, "desc": "Power cartridge for blaster rifles: one full magazine (30 shots). Reload: R."},
+	"heavy_cell": {"name": "Heavy Repeater Cell", "type": "ammo", "stack": 10, "color": Color(0.95, 0.25, 0.2), "tag": "HVC",
+		"shots": 75, "desc": "Long drum cell for the Heavy Repeater: one full 75-round magazine. Reload: R."},
+	"fuel":    {"name": "Fuel Canister", "type": "ammo", "stack": 10, "color": Color(1.0, 0.45, 0.1), "tag": "FUL",
+		"shots": 100, "desc": "Pressurised canister of promethium gel for the flamethrower: one full tank. Found in wrecks, or made at the bench. Reload: R."},
 	# Weapons
 	"rifle":   {"name": "Blaster Rifle", "type": "weapon", "slot": "primary", "stack": 1, "color": Color(0.25, 0.25, 0.28), "tag": "RFL",
-		"damage": 1.0, "rate": 0.16, "desc": "Standard-issue blaster rifle. Uses blaster cartridges."},
+		"damage": 1.0, "rate": 0.16, "ammo": "cartridge", "mag": 30, "desc": "Standard-issue blaster rifle. 30-round magazine. Uses blaster cartridges."},
 	"pistol":  {"name": "Blaster Pistol", "type": "weapon", "slot": "sidearm", "stack": 1, "color": Color(0.35, 0.3, 0.3), "tag": "PST",
 		"damage": 0.6, "rate": 0.32, "desc": "Sidearm with a self-charging cell: never needs ammo, but weaker. Switch weapon: Q."},
+	# New weapons (models/weapons/, Meshy). "model"/"len"/"grip"/"muzzle": see
+	# player.gd _mount_weapons (grip and muzzle in model units, side view).
+	"lmg":     {"name": "Heavy Repeater", "type": "weapon", "slot": "primary", "stack": 1, "color": Color(0.5, 0.15, 0.12), "tag": "LMG",
+		"damage": 0.7, "rate": 0.085, "ammo": "heavy_cell", "mag": 75, "model": "res://models/weapons/lmg.glb", "len": 1.15,
+		"grip": Vector2(0.6, -0.12), "muzzle": Vector2(-0.95, 0.07),
+		"desc": "Twin-barrel light repeater. Heavy, loud, and it never stops. 75-round magazine. Uses heavy repeater cells."},
+	"flamethrower": {"name": "Flamethrower", "type": "weapon", "slot": "primary", "stack": 1, "color": Color(0.9, 0.35, 0.1), "tag": "FLM",
+		"damage": 0.3, "rate": 0.07, "flame": true, "ammo": "fuel", "mag": 100, "model": "res://models/weapons/flamethrower.glb", "len": 1.05,
+		"grip": Vector2(0.62, -0.1), "muzzle": Vector2(-0.95, 0.02),
+		"desc": "Throws burning gel about 20 m in an arc. Where it lands it keeps burning for a few seconds. The creatures hate fire. Uses fuel canisters (one tank = 100)."},
+	"pistol_heavy": {"name": "Heavy Machine Pistol", "type": "weapon", "slot": "sidearm", "stack": 1, "color": Color(0.35, 0.33, 0.3), "tag": "HMP",
+		"damage": 0.55, "rate": 0.2, "model": "res://models/weapons/pistol_heavy.glb", "len": 0.32,
+		"grip": Vector2(0.8, -0.25), "muzzle": Vector2(-0.95, 0.27),
+		"desc": "Chunky self-charging machine pistol. Fast, never needs ammo. Switch weapon: Q."},
+	"pistol_long": {"name": "Long Blaster Pistol", "type": "weapon", "slot": "sidearm", "stack": 1, "color": Color(0.25, 0.25, 0.28), "tag": "LBP",
+		"damage": 0.85, "rate": 0.38, "model": "res://models/weapons/pistol_long.glb", "len": 0.36,
+		"grip": Vector2(0.78, -0.2), "muzzle": Vector2(-0.95, 0.3),
+		"desc": "Long-barrelled, precise self-charging pistol. Slow and accurate. Switch weapon: Q."},
+	"control_chip": {"name": "Drone Control Chip", "type": "resource", "stack": 1, "color": Color(0.9, 0.2, 0.2), "tag": "CHP",
+		"desc": "A hand-built control chip to replace the burnt-out one in the drone from the freighter."},
 	# Tools
 	"hatchet": {"name": "Vibro-Hatchet", "type": "tool", "stack": 1, "color": Color(0.7, 0.45, 0.3), "tag": "HAT",
 		"desc": "Lets you chop trees for wood (E at a tree)."},
@@ -40,6 +78,14 @@ const ITEMS := {
 	# Utility
 	"grenade": {"name": "Frag Grenade", "type": "utility", "slot": "utility", "stack": 5, "color": Color(0.35, 0.45, 0.3), "tag": "GRN",
 		"damage": 70.0, "radius": 4.5, "desc": "Throw with G (uses the first utility slot)."},
+	"flashbang": {"name": "Flashbang", "type": "utility", "slot": "utility", "stack": 5, "color": Color(0.9, 0.9, 0.95), "tag": "FLS",
+		"effect": "flash", "damage": 0.0, "radius": 9.0, "desc": "Blinding flash and bang. Creatures caught in it stagger about, unable to attack, for 3 s. Throw with G."},
+	"smoke_grenade": {"name": "Smoke Grenade", "type": "utility", "slot": "utility", "stack": 5, "color": Color(0.6, 0.62, 0.6), "tag": "SMK",
+		"effect": "smoke", "damage": 0.0, "radius": 6.0, "desc": "Thick smoke for 8 s. Creatures inside it, or hunting someone inside it, lose track of their prey. Throw with G."},
+	"stun_grenade": {"name": "Stun Grenade", "type": "utility", "slot": "utility", "stack": 5, "color": Color(0.35, 0.65, 1.0), "tag": "STN",
+		"effect": "stun", "damage": 15.0, "radius": 6.0, "desc": "Electric burst: light damage and locks creatures in place for 2.5 s. Throw with G."},
+	"thermal": {"name": "Thermal Detonator", "type": "utility", "slot": "utility", "stack": 3, "color": Color(0.85, 0.75, 0.6), "tag": "THD",
+		"effect": "thermal", "damage": 190.0, "radius": 7.5, "desc": "Crystal-core thermal charge. A huge blast that leaves the ground burning. Throw with G."},
 	# Enhancement modules
 	"mod_plating":   {"name": "Plating Module", "type": "module", "slot": "module", "stack": 1, "color": Color(0.45, 0.5, 0.55), "tag": "M-PL",
 		"bonus": {"health": 25.0}, "desc": "+25 max health while equipped."},
@@ -49,6 +95,16 @@ const ITEMS := {
 		"bonus": {"speed": 0.1}, "desc": "+10% movement speed while equipped."},
 	"mod_capacitor": {"name": "Capacitor Module", "type": "module", "slot": "module", "stack": 1, "color": Color(0.95, 0.8, 0.3), "tag": "M-CP",
 		"bonus": {"mag": 10}, "desc": "+10 shots per magazine while equipped."},
+	"mod_nanite":    {"name": "Nanite Module", "type": "module", "slot": "module", "stack": 1, "color": Color(0.4, 0.95, 0.6), "tag": "M-NN",
+		"bonus": {"regen": 1.5}, "desc": "+1.5 health/s regeneration (after 5 s without being hit) while equipped."},
+	"mod_armor":     {"name": "Reactive Armour Module", "type": "module", "slot": "module", "stack": 1, "color": Color(0.55, 0.5, 0.45), "tag": "M-AR",
+		"bonus": {"armor": 0.08}, "desc": "Take 8% less damage while equipped."},
+	"mod_crit":      {"name": "Crystal Lens Module", "type": "module", "slot": "module", "stack": 1, "color": Color(0.35, 0.85, 1.0), "tag": "M-CL",
+		"bonus": {"crit": 0.06, "damage": 0.08}, "desc": "+6% critical chance and +8% weapon damage while equipped. Needs spire crystal."},
+	"mod_loader":    {"name": "Autoloader Module", "type": "module", "slot": "module", "stack": 1, "color": Color(0.9, 0.6, 0.25), "tag": "M-AL",
+		"bonus": {"reload": 0.3}, "desc": "Reload 30% faster while equipped."},
+	"mod_cooling":   {"name": "Cooling Module", "type": "module", "slot": "module", "stack": 1, "color": Color(0.5, 0.75, 0.95), "tag": "M-CO",
+		"bonus": {"rate": 0.1}, "desc": "+10% fire rate while equipped."},
 	# Placeable storage
 	"crate_wood":  {"name": "Wooden Crate", "type": "placeable", "stack": 5, "slots": 10, "color": Color(0.5, 0.36, 0.22), "tag": "CRW",
 		"desc": "Timber storage crate on a scrap-metal frame with a mag-lock. Holds 10 stacks. Use it from your backpack to place it at camp."},
@@ -57,14 +113,23 @@ const ITEMS := {
 }
 
 ## Crafting menu categories, in tab order (recipes pick one with "cat").
-const CRAFT_CATS := ["MEDICAL", "AMMO & GEAR", "TOOLS", "MODULES", "STORAGE"]
+const CRAFT_CATS := ["MEDICAL", "AMMO & GEAR", "GRENADES", "TOOLS", "MODULES", "STORAGE", "TEST WEAPONS"]
 
 ## Crafting bench recipes. bench = bench level needed; skill = skill node needed.
 const RECIPES := [
 	{"id": "bandage", "out": "bandage", "count": 1, "in": {"fiber": 3}, "bench": 1, "cat": "MEDICAL"},
+	{"id": "coagulant", "out": "coagulant", "count": 1, "in": {"glowcap": 2, "fiber": 1}, "bench": 1, "cat": "MEDICAL"},
 	{"id": "stim", "out": "stim", "count": 1, "in": {"bandage": 1, "tech": 1, "plastic": 2}, "bench": 2, "skill": "field_chem", "cat": "MEDICAL"},
 	{"id": "cartridge", "out": "cartridge", "count": 1, "in": {"scrap": 2, "tech": 1}, "bench": 1, "cat": "AMMO & GEAR"},
-	{"id": "grenade", "out": "grenade", "count": 2, "in": {"scrap": 2, "ore": 1, "plastic": 1}, "bench": 2, "cat": "AMMO & GEAR"},
+	{"id": "trauma_kit", "out": "trauma_kit", "count": 1, "in": {"bandage": 2, "coagulant": 1, "plastic": 1}, "bench": 2, "skill": "pharmacology", "cat": "MEDICAL"},
+	{"id": "antivenom", "out": "antivenom", "count": 2, "in": {"glowcap": 2, "tech": 1, "plastic": 1}, "bench": 2, "skill": "pharmacology", "cat": "MEDICAL"},
+	{"id": "heavy_cell", "out": "heavy_cell", "count": 1, "in": {"scrap": 3, "tech": 1, "ore": 1}, "bench": 1, "cat": "AMMO & GEAR"},
+	{"id": "fuel", "out": "fuel", "count": 1, "in": {"plastic": 2, "scrap": 1, "fiber": 2}, "bench": 1, "cat": "AMMO & GEAR"},
+	{"id": "grenade", "out": "grenade", "count": 2, "in": {"scrap": 2, "ore": 1, "plastic": 1}, "bench": 2, "cat": "GRENADES"},
+	{"id": "flashbang", "out": "flashbang", "count": 2, "in": {"scrap": 1, "plastic": 1, "tech": 1}, "bench": 2, "cat": "GRENADES"},
+	{"id": "smoke_grenade", "out": "smoke_grenade", "count": 2, "in": {"fiber": 3, "plastic": 1, "scrap": 1}, "bench": 2, "cat": "GRENADES"},
+	{"id": "stun_grenade", "out": "stun_grenade", "count": 2, "in": {"tech": 2, "scrap": 1, "ore": 1}, "bench": 2, "cat": "GRENADES"},
+	{"id": "thermal", "out": "thermal", "count": 1, "in": {"ore": 2, "crystal": 1, "tech": 2, "scrap": 2}, "bench": 3, "cat": "GRENADES"},
 	{"id": "pistol", "out": "pistol", "count": 1, "in": {"scrap": 4, "tech": 2, "plastic": 1}, "bench": 2, "cat": "AMMO & GEAR"},
 	{"id": "hatchet", "out": "hatchet", "count": 1, "in": {"scrap": 3, "wood": 2, "tech": 1}, "bench": 1, "cat": "TOOLS"},
 	{"id": "pick", "out": "pick", "count": 1, "in": {"scrap": 4, "wood": 2}, "bench": 1, "cat": "TOOLS"},
@@ -72,6 +137,17 @@ const RECIPES := [
 	{"id": "mod_targeting", "out": "mod_targeting", "count": 1, "in": {"tech": 3, "plastic": 2, "ore": 1}, "bench": 2, "skill": "modding", "cat": "MODULES"},
 	{"id": "mod_servo", "out": "mod_servo", "count": 1, "in": {"tech": 2, "scrap": 3, "fiber": 2}, "bench": 2, "skill": "modding", "cat": "MODULES"},
 	{"id": "mod_capacitor", "out": "mod_capacitor", "count": 1, "in": {"tech": 3, "ore": 2}, "bench": 2, "skill": "modding", "cat": "MODULES"},
+	{"id": "mod_loader", "out": "mod_loader", "count": 1, "in": {"tech": 2, "scrap": 4, "ore": 1}, "bench": 2, "cat": "MODULES"},
+	{"id": "mod_nanite", "out": "mod_nanite", "count": 1, "in": {"tech": 3, "glowcap": 2, "plastic": 2}, "bench": 3, "cat": "MODULES"},
+	{"id": "mod_armor", "out": "mod_armor", "count": 1, "in": {"ore": 4, "scrap": 4, "tech": 2}, "bench": 3, "cat": "MODULES"},
+	{"id": "mod_cooling", "out": "mod_cooling", "count": 1, "in": {"tech": 3, "plastic": 2, "crystal": 1}, "bench": 3, "skill": "modding", "cat": "MODULES"},
+	{"id": "mod_crit", "out": "mod_crit", "count": 1, "in": {"crystal": 3, "tech": 2, "ore": 2}, "bench": 3, "skill": "modding", "cat": "MODULES"},
+	{"id": "control_chip", "out": "control_chip", "count": 1, "in": {"tech": 2, "scrap": 2, "plastic": 1}, "bench": 1, "cat": "AMMO & GEAR"},
+	# Testing: every new weapon for 1 scrap.
+	{"id": "lmg", "out": "lmg", "count": 1, "in": {"scrap": 1}, "bench": 1, "cat": "TEST WEAPONS"},
+	{"id": "flamethrower", "out": "flamethrower", "count": 1, "in": {"scrap": 1}, "bench": 1, "cat": "TEST WEAPONS"},
+	{"id": "pistol_heavy", "out": "pistol_heavy", "count": 1, "in": {"scrap": 1}, "bench": 1, "cat": "TEST WEAPONS"},
+	{"id": "pistol_long", "out": "pistol_long", "count": 1, "in": {"scrap": 1}, "bench": 1, "cat": "TEST WEAPONS"},
 	{"id": "crate_wood", "out": "crate_wood", "count": 1, "in": {"wood": 6, "scrap": 2}, "bench": 1, "cat": "STORAGE"},
 	{"id": "crate_metal", "out": "crate_metal", "count": 1, "in": {"scrap": 8, "plastic": 2, "tech": 1}, "bench": 1, "cat": "STORAGE"},
 ]
@@ -80,6 +156,7 @@ const RECIPES := [
 const BENCH_LEVELS := {
 	1: {"in": {"wood": 4, "scrap": 3}},
 	2: {"in": {"scrap": 6, "tech": 3, "ore": 2}},
+	3: {"in": {"scrap": 10, "tech": 6, "ore": 5, "crystal": 2}},
 }
 
 ## Skill tree. One point per player level. ranks = how many times it can be taken.
@@ -101,10 +178,11 @@ const ATTR_PER_LEVEL := 2
 ## Skill trees (disciplines). Each tier opens at a player level and once
 ## enough points are spent in that tree: [level, points in tree].
 const TIERS := [[1, 0], [4, 3], [8, 6], [12, 9]]
-const BRANCHES := ["MARKSMAN", "VANGUARD", "ENGINEER", "COMMAND", "SCAVENGER"]
+const BRANCHES := ["MARKSMAN", "VANGUARD", "MEDIC", "ENGINEER", "COMMAND", "SCAVENGER"]
 const BRANCH_BLURB := {
 	"MARKSMAN": "Blaster mastery: damage, criticals and rate of fire.",
 	"VANGUARD": "Staying alive: health, armour, evasion and recovery.",
+	"MEDIC": "Field medicine: stronger healing, regeneration and remedies.",
 	"ENGINEER": "Tech and crafting: grenades, modules and the bench.",
 	"COMMAND": "Leading the squad: the droid and your allies.",
 	"SCAVENGER": "Living off the land: salvage, loot and experience.",
@@ -126,6 +204,14 @@ const SKILLS := [
 	{"id": "second_wind", "branch": "VANGUARD", "tier": 2, "name": "Second Wind", "ranks": 2, "desc": "Regenerate 1.5 health/s per rank after 5 s without being hit."},
 	{"id": "evasive", "branch": "VANGUARD", "tier": 2, "name": "Evasive", "ranks": 2, "desc": "+4% chance to evade an attack per rank."},
 	{"id": "last_stand", "branch": "VANGUARD", "tier": 3, "name": "Last Stand", "ranks": 1, "desc": "A killing blow leaves you at 1 health and invulnerable for 3 s instead. Once every 2 minutes."},
+	# Medic
+	{"id": "triage", "branch": "MEDIC", "tier": 0, "name": "Triage", "ranks": 3, "desc": "Healing items restore 15% more per rank."},
+	{"id": "pharmacist", "branch": "MEDIC", "tier": 0, "name": "Pharmacist", "ranks": 1, "desc": "Crafting medical supplies makes one extra."},
+	{"id": "regenerative", "branch": "MEDIC", "tier": 1, "name": "Regenerative Care", "ranks": 2, "desc": "+0.75 health/s regeneration per rank (after 5 s without being hit)."},
+	{"id": "pharmacology", "branch": "MEDIC", "tier": 1, "name": "Pharmacology", "ranks": 1, "desc": "Unlocks the Trauma Kit and Antivenom Shot recipes."},
+	{"id": "anatomy", "branch": "MEDIC", "tier": 2, "name": "Creature Anatomy", "ranks": 2, "desc": "+8% damage to creatures per rank: you know where it hurts."},
+	{"id": "auto_injector", "branch": "MEDIC", "tier": 2, "name": "Auto-Injector", "ranks": 1, "desc": "Below 25% health, your best healing item is used automatically. Once every 45 s."},
+	{"id": "second_chance", "branch": "MEDIC", "tier": 3, "name": "Second Chance", "ranks": 1, "desc": "A killing blow uses up a healing item instead and leaves you at 40% health. Once every 3 minutes."},
 	# Engineer
 	{"id": "tinkerer", "branch": "ENGINEER", "tier": 0, "name": "Tinkerer", "ranks": 1, "desc": "Bench crafting gives double XP."},
 	{"id": "demolitions", "branch": "ENGINEER", "tier": 0, "name": "Demolitions", "ranks": 2, "desc": "+25% grenade damage and +0.75 m blast radius per rank."},
@@ -189,14 +275,71 @@ const QUESTS := [
 		"desc": "Every fight on Kethra teaches you something. Put what you've learned to use.",
 		"goals": [["spent_point", "Spend a skill point (Esc → SKILLS)",
 			"Press Esc and open SKILLS (or press K). Spend a point on any skill, or an attribute point on any attribute."]]},
+	{"title": "Strike the Vein",
+		"desc": "A better bench needs ore, and loose stones won't cover it. The crystal spires west of camp have ore veins at their feet, and so do the cliffs beside the cave. You'll need a pick. While you're there, the crystal itself might be worth chipping off.",
+		"goals": [["crafted:pick", "Craft a mining pick",
+			"Craft a Mining Pick at the workbench (TOOLS)."],
+			["mined", "Mine an ore vein",
+			"Ore veins glow orange. Two are at the foot of the cliffs either side of the cave mouth, two at the Crystal Spires to the west (marked on the map). Press E with the pick in your kit."],
+			["have:ore:3", "Collect 3 ore",
+			"Each vein gives ore a few times before it's spent. Loose ore stones also lie around the valley."]]},
 	{"title": "Upgrades",
 		"desc": "The basics are covered. Now make them better: a stronger bench, and gear that gives you an edge.",
 		"goals": [["bench:2", "Upgrade the crafting bench",
 			"Use the workbench and choose Upgrade. It needs salvage and materials."],
 			["equipped_module", "Craft and equip an enhancement module",
 			"Craft a module at the upgraded bench, then open the inventory (Tab) and equip it in a module slot."]]},
+	{"title": "Check On Him",
+		"desc": "The camp is running and the bench is better than it's ever been. But he still hasn't woken up, and the dressings on those bites are soaked through again. Go and look at him properly.",
+		"goals": [["checked_on_him", "Check on the trooper",
+			"Go into the cave and press E at his cot."]]},
 ]
 const QUEST_XP := 40
+
+## Her own missions while he recovers (Shipfall Reach). They start when you
+## check on him at camp as her, and run ahead of the camp missions until done
+## (GS.flags["med_stage"]). Text follows LORE.md.
+const MED_QUESTS := [
+	{"title": "Pathfinder Cache",
+		"desc": "He's lost too much blood for field dressings, and the bites won't close. On the march in from the HALCYON, your unit cached its heavy med packs in the wreck field east of camp so it could move faster. You marked every cache with a pathfinder beacon and swore you'd be back for them in two days. Go and get them.",
+		"goals": [["reach_waypoint", "Find your unit's waypoint camp in Shipfall Reach",
+			"Take the trail east out of Base Camp (it leaves the camp path by the escape pod), then press E at the end of it. The camp is a short walk along the trail."],
+			["have:medpack:3", "Recover the med packs from your unit's caches",
+			"Look for the blinking orange pathfinder beacons: one inside the broken freighter, one on the old stone ruins east of the river, one by the survey lander across the southern stream."]]},
+	{"title": "Field Remedies",
+		"desc": "The packs survived. The coagulant didn't: every vial is cracked or spoiled. The pathfinder survival brief swore by glowcap sap as a clotting agent. You hate waste, and the riverbanks are full of the stuff.",
+		"goals": [["have:glowcap:4", "Gather glowcaps along the riverbanks",
+			"Glowcaps grow on the damp banks of both rivers: broad dark leaves and glowing bulbs. Press E to pick them."],
+			["crafted:coagulant", "Cook coagulant at the field med kit",
+			"Use the field med kit at your unit's waypoint camp. Spare coagulant is a strong heal, and you can make more at the workbench later."]]},
+	{"title": "Tissue Samples",
+		"desc": "Coagulant will close the wounds, but something in the creatures' bite keeps blood from clotting at all. You won't counter it without knowing what it is. You need tissue from the creatures themselves.",
+		"goals": [["have:tissue:3", "Take tissue samples from slain creatures",
+			"Kill creatures in Shipfall Reach, then press E at a body to take a sample (look for the blue vial marker)."],
+			["analysed_tissue", "Study the samples at the field med kit",
+			"Use the field med kit at the waypoint camp with three samples."]]},
+	{"title": "Bring It Home",
+		"desc": "You have what he needs: sutures, coagulant, and some idea of what you're fighting. Get the supplies back to the trooper before the fever takes hold.",
+		"goals": [["treated_trooper", "Bring the med supplies to the trooper and treat him",
+			"Head back west to Base Camp, go into the cave and press E at his cot."]]},
+]
+
+## The mini combat drone (starts when the camp missions or her medical
+## missions are done, whichever is first; either of you can do it). GS.flags["drone_stage"].
+const DRONE_QUESTS := [
+	{"title": "Signal in the Wreck",
+		"desc": "For days now the Strider droid has been pinging a weak transponder from Shipfall Reach, east over the hills. It's coming from the broken freighter: something small, still holding a charge.",
+		"goals": [["found_drone", "Find the source of the signal in the freighter's nose",
+			"Take the trail east out of Base Camp (it leaves the camp path by the escape pod) and press E at its end to reach Shipfall Reach. Then find the nose half of the broken freighter, west of the river. Walk in through the torn end and look along the cargo racks."]]},
+	{"title": "Control Chip",
+		"desc": "A mini combat drone, folded up in its cradle. The frame's fine, the guns are fine. The control chip's a melted lump. Build a new one at the workbench.",
+		"goals": [["crafted:control_chip", "Craft a drone control chip at the workbench",
+			"At the Base Camp workbench, craft a Drone Control Chip (AMMO & GEAR). It needs tech components, scrap and plastic."]]},
+	{"title": "Wake It Up",
+		"desc": "Fit the new chip and see if the drone still remembers how to fight.",
+		"goals": [["drone_installed", "Install the chip in the drone in the freighter",
+			"Go back to the freighter's nose in Shipfall Reach and press E at the drone."]]},
+]
 
 ## Inventory icon for an item (res://icons/items/<id>.png), or null.
 static func icon(id: String) -> Texture2D:
@@ -215,5 +358,7 @@ const CRATE_LOOT := [
 	["plastic", 1, 3, 0.5],
 	["ration", 1, 1, 0.45],
 	["cartridge", 1, 2, 0.55],
+	["heavy_cell", 1, 1, 0.25],
+	["fuel", 1, 1, 0.25],
 	["ore", 1, 2, 0.25],
 ]

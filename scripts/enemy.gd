@@ -22,6 +22,15 @@ var health := 40.0
 var attack_range := 2.1
 var attack_damage := 12.0
 var attack_cooldown := 1.1
+## Dormant creatures stand their ground (no roar, no chase) until you come
+## within wake_range, shoot one, or a pack-mate wakes (Shipfall Reach).
+var dormant := false
+var wake_range := 26.0
+## Grenade effects: stunned creatures can't move or attack; confused ones
+## (smoke, flash) wander, unable to find their prey.
+var stun_t := 0.0
+var confuse_t := 0.0
+var _wander_yaw := 0.0
 
 var gravity: float = ProjectSettings.get_setting("physics/3d/default_gravity")
 
@@ -70,8 +79,38 @@ func _ready() -> void:
 	_time = randf() * 10.0
 	_pounce_cd = randf_range(2.0, 5.0)
 	_build_body()
+	if dormant:
+		_state = State.CHASE   # quiet: idle until woken (see wake())
+		return
 	# Not every creature roars, so a wave doesn't freeze in place.
 	_set_state(State.ROAR if randf() < 0.6 else State.CHASE)
+
+
+func stun(t: float) -> void:
+	if _dead:
+		return
+	wake()
+	stun_t = maxf(stun_t, t)
+	_flinch_v -= 6.0
+
+
+func confuse(t: float) -> void:
+	if _dead:
+		return
+	if confuse_t <= 0.0:
+		_wander_yaw = randf() * TAU
+	confuse_t = maxf(confuse_t, t)
+
+
+## Wakes a dormant creature (and its pack within 14 m).
+func wake() -> void:
+	if not dormant or _dead:
+		return
+	dormant = false
+	_set_state(State.ROAR)
+	for e in get_tree().get_nodes_in_group("enemy"):
+		if e != self and "dormant" in e and e.dormant and e.global_position.distance_to(global_position) < 14.0:
+			e.wake()
 
 
 func _build_body() -> void:
@@ -138,6 +177,28 @@ func _physics_process(delta: float) -> void:
 		to_target = target.global_position - global_position
 		to_target.y = 0.0
 		dist = to_target.length()
+
+	if dormant:
+		if dist < wake_range:
+			wake()
+		else:
+			velocity.x = move_toward(velocity.x, 0.0, 10.0 * delta)
+			velocity.z = move_toward(velocity.z, 0.0, 10.0 * delta)
+			move_and_slide()
+			return
+
+	if stun_t > 0.0 or confuse_t > 0.0:
+		stun_t = maxf(stun_t - delta, 0.0)
+		confuse_t = maxf(confuse_t - delta, 0.0)
+		var wv := Vector3.ZERO
+		if stun_t <= 0.0:
+			_wander_yaw += randf_range(-2.0, 2.0) * delta
+			wv = Vector3(sin(_wander_yaw), 0.0, cos(_wander_yaw)) * 1.4
+			rotation.y = lerp_angle(rotation.y, _wander_yaw, clampf(delta * 3.0, 0.0, 1.0))
+		velocity.x = move_toward(velocity.x, wv.x, 10.0 * delta)
+		velocity.z = move_toward(velocity.z, wv.z, 10.0 * delta)
+		move_and_slide()
+		return
 
 	var desired := Vector3.ZERO
 	var turn_rate := 10.0
@@ -247,6 +308,7 @@ func take_damage(amount: float, from_dir := Vector3.ZERO) -> void:
 		return
 	if max_health <= 0.0:
 		max_health = health
+	wake()
 	health -= amount
 	if health > 0.0 and _hurt_cd <= 0.0:
 		_hurt_cd = 0.35
@@ -485,12 +547,18 @@ func _pose_death(p: Dictionary, d: float) -> Vector3:
 func _drop_loot() -> void:
 	var r := randf()
 	var id := ""
-	if r < 0.22:
+	if r < 0.15:
 		id = "cartridge"
-	elif r < 0.34:
+	elif r < 0.21:
+		id = "heavy_cell"
+	elif r < 0.26:
+		id = "fuel"
+	elif r < 0.37:
 		id = "scrap"
-	elif r < 0.40:
+	elif r < 0.43:
 		id = "tech"
+	elif r < 0.47:
+		id = "crystal"   # a sliver of its crystal spines (LORE.md)
 	if id == "":
 		return
 	var p := global_position

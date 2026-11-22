@@ -37,6 +37,10 @@ func _ready() -> void:
 		"vein":
 			_build_vein()
 			reach = 3.0
+		"crystal":
+			_build_crystal()
+			reach = 3.0
+			uses = 2
 		"tree":
 			reach = 2.8
 
@@ -46,6 +50,11 @@ func get_prompt() -> String:
 		return ""
 	match kind:
 		"resource":
+			match item_id:
+				"tissue":
+					return "Take a tissue sample"
+				"glowcap":
+					return "Pick glowcaps"
 			return "Pick up %s" % GS.item(item_id).get("name", item_id)
 		"crate":
 			return "Search supply crate"
@@ -53,6 +62,8 @@ func get_prompt() -> String:
 			return "Chop tree" if GS.count("hatchet") > 0 else "Chop tree  (needs a Vibro-Hatchet)"
 		"vein":
 			return "Mine ore vein" if GS.count("pick") > 0 else "Mine ore vein  (needs a Mining Pick)"
+		"crystal":
+			return "Chip off spire crystal" if GS.count("pick") > 0 else "Chip off spire crystal  (needs a Mining Pick)"
 	return ""
 
 
@@ -87,6 +98,7 @@ func interact() -> void:
 				return
 			var n2 := randi_range(1, 2) * (2 if GS.rank("lumberjack") > 0 else 1)
 			GS.add_item("ore", n2)
+			GS.flags["mined"] = true
 			GS.add_xp(2)
 			Sfx.at(global_position + Vector3.UP * 0.5, "impact", 0.0, 0.3, 8.0)
 			uses -= 1
@@ -95,6 +107,44 @@ func interact() -> void:
 				for c in get_children():
 					if c is MeshInstance3D:
 						(c as MeshInstance3D).material_override = U.mat(Color(0.3, 0.29, 0.28), 0.95)
+
+
+		"crystal":
+			if GS.count("pick") <= 0:
+				GS.toast("You need a Mining Pick. Craft one at the bench.")
+				return
+			GS.add_item("crystal", 1 * (2 if GS.rank("lumberjack") > 0 else 1))
+			GS.flags["mined"] = true
+			GS.add_xp(3)
+			Sfx.at(global_position + Vector3.UP * 0.5, "impact", 2.0, 0.5, 8.0)
+			uses -= 1
+			if uses <= 0:
+				enabled = false
+				for c in get_children():
+					if c is OmniLight3D:
+						(c as OmniLight3D).light_energy = 0.15
+
+
+## A glowing crystal cluster you can chip shards off with a pick.
+func _build_crystal() -> void:
+	var m := reach_mesh("CrystalCluster")
+	if m != null:
+		_mesh(m, null, Vector3.ZERO, Vector3.ZERO, Vector3.ONE * 0.55)
+	else:
+		for i in 5:
+			var cm := CylinderMesh.new()
+			cm.top_radius = 0.0
+			cm.bottom_radius = 0.08
+			cm.height = randf_range(0.4, 0.8)
+			cm.radial_segments = 6
+			_mesh(cm, U.mat(Color(0.35, 0.85, 1.0), 0.1, Color(0.2, 0.75, 1.0), 2.5),
+					Vector3(randf_range(-0.2, 0.2), 0.25, randf_range(-0.2, 0.2)), Vector3(randf_range(-0.4, 0.4), 0.0, randf_range(-0.4, 0.4)))
+	var gl := OmniLight3D.new()
+	gl.light_color = Color(0.3, 0.8, 1.0)
+	gl.light_energy = 1.0
+	gl.omni_range = 3.5
+	gl.position.y = 0.6
+	add_child(gl)
 
 
 func _open_crate() -> void:
@@ -135,7 +185,36 @@ func _mesh(m: Mesh, mat: Material, pos: Vector3, rot := Vector3.ZERO, sc := Vect
 	return mi
 
 
+## Meshes for the Shipfall Reach pickups (models/reach_kit.glb).
+const REACH_KIT := "res://models/reach_kit.glb"
+static var _reach_parts := {}
+
+static func reach_mesh(n: String) -> Mesh:
+	if _reach_parts.is_empty() and ResourceLoader.exists(REACH_KIT):
+		var lib: Node = load(REACH_KIT).instantiate()
+		for mi in lib.find_children("*", "MeshInstance3D", true, false):
+			_reach_parts[String(mi.name)] = (mi as MeshInstance3D).mesh
+		lib.free()
+	return _reach_parts.get(n)
+
+
 func _build_resource() -> void:
+	var kit := {"glowcap": ["Glowcap", 1.0], "tissue": ["TissueVial", 1.6], "medpack": ["MedPack", 1.5]}
+	if kit.has(item_id) and reach_mesh(kit[item_id][0]) != null:
+		_mesh(reach_mesh(kit[item_id][0]), null, Vector3.ZERO, Vector3.ZERO, Vector3.ONE * float(kit[item_id][1]))
+		if item_id == "glowcap":
+			var gl := OmniLight3D.new()
+			gl.light_color = Color(0.6, 1.0, 0.4)
+			gl.light_energy = 0.6
+			gl.omni_range = 2.2
+			gl.position.y = 0.6
+			add_child(gl)
+	else:
+		_build_resource_basic()
+	_build_marker()
+
+
+func _build_resource_basic() -> void:
 	match item_id:
 		"wood":
 			# A small pile of cut logs, big enough to see over the grass.
@@ -193,6 +272,9 @@ func _build_resource() -> void:
 			var b3 := BoxMesh.new()
 			b3.size = Vector3(0.25, 0.15, 0.25)
 			_mesh(b3, U.mat(GS.item(item_id).get("color", Color.WHITE), 0.6), Vector3(0, 0.08, 0))
+
+
+func _build_marker() -> void:
 	# A small floating marker so pickups stand out from the grass.
 	var col: Color = GS.item(item_id).get("color", Color.WHITE)
 	var mk := MeshInstance3D.new()

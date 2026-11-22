@@ -26,6 +26,7 @@ const WRECK_POS := Vector3(-9.0, 0.0, -8.0)
 ## Set so the ship lies across your view at the start, torn side towards you.
 const WRECK_FURROW_DEG := 125.0
 const WreckScript = preload("res://scripts/wreck.gd")
+const WorldMap = preload("res://scripts/world_map.gd")
 ## Terrain3D heightmap size in metres (centred on the clearing).
 const TERRAIN_SIZE := 384
 const TERRAIN_MATERIAL := "res://demo/data/M_terrain.tres"
@@ -444,7 +445,17 @@ func _height_at(x: float, z: float) -> float:
 		var berm := smoothstep(0.7, 1.0, across) * (1.0 - smoothstep(1.0, 1.6, across)) * 0.45 * (1.0 - along)
 		berm += (1.0 - smoothstep(0.0, 1.2, across)) * smoothstep(-14.0, -11.5, local.y) * (1.0 - smoothstep(-11.5, -9.5, local.y)) * 1.1
 		h += berm - cut
+	# The trail north out of the clearing (world_map.gd CRASH_LEAD) cuts
+	# through the ring of hills, so it visibly runs on into The Trail.
+	var td := _lead_dist(x, z)
+	if td < 20.0:
+		var on := (1.0 - smoothstep(4.0, 14.0, td)) * smoothstep(-16.0, -28.0, z)
+		h = lerpf(h, roll * 0.3, on)
 	return h
+
+
+func _lead_dist(x: float, z: float) -> float:
+	return WorldMap.lead_dist(WorldMap.CRASH_LEAD, x, z)
 
 
 func _build_ground() -> void:
@@ -531,6 +542,21 @@ func _build_terrain() -> void:
 				var burn := 1.0 - smoothstep(4.0, 15.0, dw + _noise_roll.get_noise_2d(x * 4.0, z * 4.0) * 3.0)
 				burn = maxf(burn, furrow * 0.55)
 				data.set_color(p, Color.WHITE.lerp(Color(0.16, 0.14, 0.12), burn))
+	# Dirt trail north out of the clearing, on through the hills.
+	# (Starts where the painted clearing fades out, so it doesn't thin it.)
+	var lz := -21.0
+	while lz > -170.0:
+		var cx := int(WorldMap.lead_x(WorldMap.CRASH_LEAD, lz))
+		for ix in range(cx - 9, cx + 10):
+			var ld := _lead_dist(ix, lz)
+			var lw := 1.0 - smoothstep(2.0, 5.5, ld + _noise_roll.get_noise_2d(ix * 4.0, lz * 4.0) * 1.5)
+			if lw > 0.03:
+				var lp := Vector3(ix, 0.0, lz)
+				data.set_control_auto(lp, false)
+				data.set_control_base_id(lp, 1)
+				data.set_control_overlay_id(lp, 2)
+				data.set_control_blend(lp, lw)
+		lz -= 1.0
 	data.update_maps()
 
 	# GPU grass that grows on the grass texture.
@@ -621,6 +647,8 @@ func _build_forest() -> void:
 			continue
 		if d < 27.0 and rng.randf() < 0.55:
 			continue
+		if _lead_dist(p.x, p.z) < 5.0:
+			continue
 		p.y = ground_y(p) - 0.15
 		var s := rng.randf_range(1.5, 2.3)
 		_add_instance(buckets, _pick_tree(pines, leafy, dead), p, s)
@@ -645,6 +673,8 @@ func _build_forest() -> void:
 			var a := rng.randf() * TAU
 			var r := sqrt(rng.randf_range(64.0 * 64.0, 175.0 * 175.0))
 			var p := Vector3(cos(a) * r, 0.0, sin(a) * r)
+			if _lead_dist(p.x, p.z) < 8.0:
+				continue
 			p.y = ground_y(p) - 0.3
 			_add_instance(buckets, _pick_tree(pines, leafy, dead), p, rng.randf_range(1.7, 2.6))
 			far += 1
@@ -669,7 +699,7 @@ func _build_forest() -> void:
 		var a := rng.randf() * TAU
 		var r := rng.randf_range(CLEARING_RADIUS - 3.0, ARENA_RADIUS + 10.0)
 		var p := Vector3(cos(a) * r, 0.0, sin(a) * r)
-		if p.distance_to(WRECK_POS) < 13.0:
+		if p.distance_to(WRECK_POS) < 13.0 or _lead_dist(p.x, p.z) < 3.5:
 			continue
 		p.y = ground_y(p) - 0.05
 		var k := rng.randi() % names.size()
@@ -776,7 +806,7 @@ func _build_rocks() -> void:
 		var a := rng.randf() * TAU
 		var r := rng.randf_range(8.0, 55.0)
 		var pos := Vector3(cos(a) * r, 0.0, sin(a) * r)
-		if pos.distance_to(WRECK_POS) < 14.0 or pos.distance_to(Vector3(0, 0, 5)) < 4.0:
+		if pos.distance_to(WRECK_POS) < 14.0 or pos.distance_to(Vector3(0, 0, 5)) < 4.0 or _lead_dist(pos.x, pos.z) < 4.0:
 			continue
 		var s := rng.randf_range(0.12, 0.5)
 		if not scenes.is_empty():

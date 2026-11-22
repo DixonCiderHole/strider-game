@@ -204,6 +204,28 @@ planet for the planet itself.
 interacting with an object (datapad, terminal, beacon, body and so on), not
 only automatically.
 
+## Shipfall Reach *(proposed name)*: her area east of Base Camp
+
+- A wreck field by two rivers beyond the valley's eastern hills. Everything
+  that flies low over the spires seems to come down here.
+- Her pathfinder unit crossed it on foot two days after the HALCYON fell
+  (the HALCYON itself is still far away, beyond the eastern ridge). They left
+  a **waypoint camp** here and **cached their heavy med packs** to travel
+  light; she marked each cache with a pathfinder beacon. Her unit called her
+  **"Doc"**.
+- Wrecks: the bulk hauler **ORLA'S PROMISE** *(proposed)*, an independent
+  charter that tried the Meridian Run the week it opened and lost all power
+  over the spires; and K-7's survey lander **K7-2**, which logged the stone
+  platform by the river.
+- **Vaari ruins:** hand-cut stone round a stepped platform with a crystal
+  heart. A Coalition ID tag with its chain cut clean lies at its foot, beside
+  drag marks into the trees.
+- **Glowcap** *(proposed)*: riverbank herb whose sap cooks down into a
+  coagulant.
+- Her missions there (`Items.MED_QUESTS`): Pathfinder Cache, Field Remedies,
+  Tissue Samples, Bring It Home. Studying the tissue shows the creatures'
+  crystal threads grow "in neat, even rows": another hint that they're made.
+
 ## Existing content to align later
 
 - **Datapads and logs** (`scripts/lore.gd`): the HALCYON transmission, K-7

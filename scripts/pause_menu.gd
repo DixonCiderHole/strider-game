@@ -396,6 +396,8 @@ func _refresh_inventory() -> void:
 	if _preview != null and player != null and is_instance_valid(player) and _preview.weapon != player.weapon:
 		_preview.weapon = player.weapon
 		_preview._show_weapon_model()
+	elif _preview != null:
+		_preview._mount_weapons()   # picks up a newly equipped gun
 	_inv_header.text = "LEVEL %d   ·   %d / %d XP   ·   %d skill point(s)   ·   Health %d / %d" % [
 		GS.player_level, GS.xp, Items.xp_for(GS.player_level), GS.skill_points,
 		int(player.health) if player != null else 0, int(GS.player_max_health())]
@@ -736,6 +738,7 @@ func _refresh_party() -> void:
 
 const MapPoi = preload("res://scripts/map_poi.gd")
 const MapOverlay = preload("res://scripts/map_overlay.gd")
+const WorldMap = preload("res://scripts/world_map.gd")
 const MAP_ZOOMS := [90.0, 160.0, 300.0]   # metres shown top to bottom
 const MAP_SIZE := Vector2(660, 620)
 const AREA_NAMES := {
@@ -744,8 +747,14 @@ const AREA_NAMES := {
 	"res://pinned.tscn": "THE CLEARING",
 	"res://drag.tscn": "THE ESCAPE",
 	"res://base.tscn": "BASE CAMP",
+	"res://reach.tscn": "SHIPFALL REACH",
 }
 var _map_zoom := 1
+## WORLD: every area on one map; LOCAL: the top-down view of this area.
+var _map_world := false
+var _map_svc: SubViewportContainer
+var _map_world_btn: Button
+var _map_zoom_btns: Array = []
 var _map_overlay
 var _map_area: Label
 var _map_list: VBoxContainer
@@ -761,6 +770,12 @@ func _build_map(page: Control) -> void:
 	var sp := Control.new()
 	sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	top.add_child(sp)
+	_map_world_btn = UI.button("WORLD MAP", 170)
+	_map_world_btn.alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_map_world_btn.pressed.connect(func():
+		_map_world = not _map_world
+		_refresh_map())
+	top.add_child(_map_world_btn)
 	for z in [["ZOOM IN", -1], ["ZOOM OUT", 1]]:
 		var zb := UI.button(z[0], 150)
 		zb.alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -768,6 +783,7 @@ func _build_map(page: Control) -> void:
 			_map_zoom = clampi(_map_zoom + int(z[1]), 0, MAP_ZOOMS.size() - 1)
 			_refresh_map())
 		top.add_child(zb)
+		_map_zoom_btns.append(zb)
 
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 18)
@@ -786,6 +802,7 @@ func _build_map(page: Control) -> void:
 	svc.stretch = true
 	UI.full_rect(svc)
 	holder.add_child(svc)
+	_map_svc = svc
 	_map_vp = SubViewport.new()
 	_map_vp.render_target_update_mode = SubViewport.UPDATE_DISABLED
 	svc.add_child(_map_vp)
@@ -852,8 +869,21 @@ func _refresh_map() -> void:
 	_map_cam.size = MAP_ZOOMS[_map_zoom]
 	_map_cam.global_position = player.global_position + Vector3(0, 250, 0)
 	var scene := get_tree().current_scene
-	var area_name: String = AREA_NAMES.get(scene.scene_file_path if scene != null else "", "UNKNOWN")
+	var scene_path := scene.scene_file_path if scene != null else ""
+	var area_name: String = AREA_NAMES.get(scene_path, "UNKNOWN")
 	_map_area.text = "YOU ARE AT:  " + area_name
+	_map_world_btn.text = "LOCAL MAP" if _map_world else "WORLD MAP"
+	_map_svc.visible = not _map_world
+	for zb in _map_zoom_btns:
+		zb.disabled = _map_world
+	_map_overlay.world_mode = _map_world
+	_map_overlay.world_here = scene_path if WorldMap.AREAS.has(scene_path) else ""
+	_map_overlay.world_you = WorldMap.to_world(scene_path, player.global_position)
+	if _map_world:
+		_map_overlay.player_yaw = player.model.global_rotation.y
+		_map_overlay.queue_redraw()
+		_world_list(scene_path)
+		return
 
 	# Gather places: map markers, plus whatever the compass is pointing at.
 	var places: Array = []
@@ -920,6 +950,28 @@ func _refresh_map() -> void:
 			info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 			box.add_child(info)
 		_map_list.add_child(box)
+
+
+## World view list: every area in order, south to north, and where you are.
+func _world_list(here: String) -> void:
+	for c in _map_list.get_children():
+		c.queue_free()
+	var i := 0
+	for sc in WorldMap.areas():
+		i += 1
+		var nm: String = WorldMap.AREAS[sc]["name"]
+		var head := HBoxContainer.new()
+		head.add_theme_constant_override("separation", 8)
+		var col := Color(1.0, 0.85, 0.4) if sc == here else UI.TEXT
+		var l := UI.label("%d.  %s" % [i, nm.to_upper()], 16, col)
+		l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		head.add_child(l)
+		if sc == here:
+			head.add_child(UI.label("You're here", 15, col))
+		_map_list.add_child(head)
+	var note := UI.label("Each area's exit joins the next area's entrance. Later, any area you've been to can be reached by teleport.", 14, UI.MUTED)
+	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_map_list.add_child(note)
 
 
 # ---------------------------------------------------------------- SKILLS
@@ -1083,7 +1135,10 @@ func _refresh_stat_sheet() -> void:
 	_stat_line("Evade chance", pct.call(GS.evade_chance()))
 	_stat_line("Block chance", "%s   (absorbs %d%%)" % [pct.call(GS.block_chance()), int(GS.BLOCK_ABSORB * 100)])
 	_stat_line("Health regeneration", "%.2f /s after 5 s" % GS.regen_rate())
-	_stat_line("Healing items", "+50%" if GS.rank("field_medic") > 0 else "normal")
+	var heal_pct := int(round(((1.5 if GS.rank("field_medic") > 0 else 1.0) + 0.15 * GS.rank("triage") - 1.0) * 100.0))
+	_stat_line("Healing items", ("+%d%%" % heal_pct) if heal_pct > 0 else "normal")
+	_stat_line("Auto-Injector", "below 25% health, every 45 s" if GS.rank("auto_injector") > 0 else "—")
+	_stat_line("Second Chance", "ready every 3 min" if GS.rank("second_chance") > 0 else "—")
 	_stat_line("Last Stand", "ready every 2 min" if GS.rank("last_stand") > 0 else "—")
 	_stat_box.add_child(UI.label("SQUAD", 18, UI.ACCENT))
 	_stat_line("Droid damage per bolt", "%.1f" % GS.droid_damage())
@@ -1101,12 +1156,12 @@ func _refresh_trees() -> void:
 		c.queue_free()
 	for br in Items.BRANCHES:
 		var col := UI.vbox(6)
-		col.custom_minimum_size = Vector2(286, 0)
+		col.custom_minimum_size = Vector2(248, 0)
 		_skills_box.add_child(col)
 		col.add_child(UI.label(br, 22, UI.ACCENT))
 		var blurb := UI.label("%s\n%d points spent" % [Items.BRANCH_BLURB[br], GS.branch_points(br)], 13, UI.MUTED)
 		blurb.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		blurb.custom_minimum_size = Vector2(286, 0)
+		blurb.custom_minimum_size = Vector2(248, 0)
 		col.add_child(blurb)
 		for tier in Items.TIERS.size():
 			var req: Array = Items.TIERS[tier]
@@ -1126,7 +1181,7 @@ func _skill_tile(sk: Dictionary, open: bool) -> Control:
 	var maxed := r >= int(sk["ranks"])
 	var b := Button.new()
 	b.focus_mode = Control.FOCUS_NONE
-	b.custom_minimum_size = Vector2(286, 0)
+	b.custom_minimum_size = Vector2(248, 0)
 	b.alignment = HORIZONTAL_ALIGNMENT_LEFT
 	b.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	b.text = "%s   %d/%d\n%s" % [sk["name"], r, int(sk["ranks"]), sk["desc"]]
@@ -1243,6 +1298,37 @@ func _refresh_quests() -> void:
 
 	var cur := GS.quest_stage
 	var deferred: bool = GS.flags.get("familiar_face_deferred", false)
+	# Side missions (selection ids base+i), listed first: her medical
+	# missions (100+) and the mini drone (200+).
+	var chains := [["MEDIC'S MISSIONS", "med_stage", Items.MED_QUESTS, 100, GS.med_active()],
+		["THE DRONE", "drone_stage", Items.DRONE_QUESTS, 200, GS.drone_active() and not GS.med_active()]]
+	var side_now := false
+	var side_sel := -1
+	for ch in chains:
+		if not GS.flags.has(ch[1]):
+			continue
+		var mcur := int(GS.flags[ch[1]])
+		var qs: Array = ch[2]
+		var base_id: int = ch[3]
+		var now: bool = ch[4]
+		if now:
+			side_now = true
+			side_sel = base_id + mcur
+		_quest_list.add_child(UI.label(String(ch[0]), 14, UI.ACCENT))
+		for i in qs.size():
+			var mq: Dictionary = qs[i]
+			var ml: String = "✓  " + String(mq["title"]) if i < mcur else ("▶  " + String(mq["title"]) if i == mcur else "•  ???")
+			var mb := UI.button(ml, 360)
+			mb.toggle_mode = true
+			mb.disabled = i > mcur
+			mb.button_pressed = (_quest_sel == base_id + i) or (_quest_sel == -1 and now and i == mcur)
+			var sid := base_id + i
+			mb.pressed.connect(func():
+				_quest_sel = sid
+				_refresh_quests())
+			_quest_list.add_child(mb)
+	if side_sel >= 0 or GS.flags.has("med_stage"):
+		_quest_list.add_child(UI.label("CAMP MISSIONS", 14, UI.ACCENT))
 	for i in Items.QUESTS.size():
 		var q: Dictionary = Items.QUESTS[i]
 		var label := ""
@@ -1257,7 +1343,7 @@ func _refresh_quests() -> void:
 		var b := UI.button(label, 360)
 		b.toggle_mode = true
 		b.disabled = i > cur
-		b.button_pressed = (_quest_sel == i) or (_quest_sel == -1 and i == cur)
+		b.button_pressed = (_quest_sel == i) or (_quest_sel == -1 and i == cur and not side_now)
 		b.pressed.connect(func():
 			_quest_sel = i
 			_refresh_quests())
@@ -1267,7 +1353,31 @@ func _refresh_quests() -> void:
 
 	var sel := _quest_sel
 	if sel == -1:
-		sel = mini(cur, Items.QUESTS.size() - 1)
+		sel = side_sel if side_now else mini(cur, Items.QUESTS.size() - 1)
+	if sel >= 100:
+		var ch2: Array = chains[0] if sel < 200 else chains[1]
+		var qs2: Array = ch2[2]
+		var mcur := int(GS.flags.get(ch2[1], 0))
+		var med_now: bool = ch2[4]
+		var mi := mini(sel - int(ch2[3]), qs2.size() - 1)
+		var mq2: Dictionary = qs2[mi]
+		var mstate: String = "COMPLETE" if mi < mcur else ("IN PROGRESS" if mi == mcur else "LOCKED")
+		if mi == mcur and not med_now:
+			mstate = "ON HOLD"
+		_quest_detail.add_child(UI.label(String(mq2["title"]).to_upper(), 26, UI.TEXT))
+		_quest_detail.add_child(UI.label(mstate, 14, UI.ACCENT if mi == mcur else UI.MUTED))
+		_quest_detail.add_child(_wrap(String(mq2.get("desc", "")), 17, UI.MUTED))
+		_quest_detail.add_child(UI.label("OBJECTIVES", 15, UI.ACCENT))
+		for g in mq2["goals"]:
+			var mdone: bool = mi < mcur or GS.goal_done(g[0])
+			_quest_detail.add_child(UI.label("%s  %s%s" % ["✓" if mdone else "□", g[1], "" if mi < mcur else GS.goal_progress(g[0])], 19, UI.MUTED if mdone else UI.TEXT))
+			if not mdone and g.size() > 2:
+				_quest_detail.add_child(_wrap("      " + String(g[2]), 15, Color(0.75, 0.8, 0.85)))
+		if mi == mcur and med_now:
+			_add_tracking(ov)
+		_quest_detail.add_child(UI.label("REWARD", 15, UI.ACCENT))
+		_quest_detail.add_child(UI.label("+%d XP" % Items.QUEST_XP, 18, Color(0.95, 0.75, 0.3)))
+		return
 	if sel == -2 and ov != null:
 		_quest_detail.add_child(UI.label(String(ov.area_title).to_upper(), 26, UI.TEXT))
 		_quest_detail.add_child(UI.label("CURRENT AREA", 14, UI.ACCENT))

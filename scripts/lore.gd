@@ -42,6 +42,26 @@ const ENTRIES := {
 		"title": "Specimen Log - Containment",
 		"source": "Datapad, survey lab",
 		"text": "Specimen 7 shows the same crystalline growth along the spine as the formations at the spires. Its tissue responds to light: it recoils from the work lamps and calms in darkness.\n\nContainment breached at 0312 during the power cut. Tank glass failed from the INSIDE.\n\nRecommend all teams keep a light source burning after dark.",
+	},	# ---- Shipfall Reach
+	"pathfinder_log": {
+		"title": "Pathfinder Team Log",
+		"source": "Datapad, waypoint camp",
+		"text": "Day 2 out from the HALCYON. Six of us walking, nobody carried. Sergeant's orders: we drop the heavy med packs here and move light through the wrecks.\n\nDoc didn't like it. Doc never likes leaving kit behind. She marked every cache with a beacon herself and made each of us repeat where they were. 'Two days,' she said. 'Then we come back for them.'\n\nRiver water's clean if you boil it. Something follows us at night, out past the firelight. Lights in the trees. Doc says it's just the crystal. Doc doesn't believe that either.",
+	},
+	"hauler_recorder": {
+		"title": "Hauler Flight Recorder",
+		"source": "Bridge console, broken freighter",
+		"text": "BULK HAULER ORLA'S PROMISE. Independent charter, Meridian Run, first week the lane opened.\n\n04:12 Dropped out of hyperspace on schedule. Descending to pick up the survey crates.\n04:19 Crystal fields below are lit up like a city.\n04:20 Everything's dead. Drives, lights, the panel. Like someone threw a switch.\n04:20 Brace, brace, brace.\n\n[recording ends]",
+	},
+	"lander_log": {
+		"title": "Lander K7-2 Flight Log",
+		"source": "Survey lander, cockpit",
+		"text": "Survey lander K7-2, out of Outpost K-7. Run to the eastern ridge to sample the spire field.\n\nReadings spike every time the crystals pulse. The pilot says the panel lights dim with it, a beat behind, like they're listening.\n\nTurning back. Logging the coordinates of the stone platform by the river: somebody built that. Somebody cut those blocks.\n\nLast entry: 'Lights in the trees again. Keep the engine warm.'",
+	},
+	"dog_tag": {
+		"title": "Coalition ID Tag",
+		"source": "Foot of the stone platform",
+		"text": "A Coalition ID tag in the dust at the foot of the platform, a long way from any wreck. Pathfinder issue.\n\nThe name's been scraped off. The chain wasn't snapped. It was cut clean.\n\nThere are marks in the dirt beside it, two long grooves heading into the trees, as if something heavy was dragged.",
 	},
 }
 

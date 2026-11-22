@@ -15,6 +15,7 @@ const CompanionScript = preload("res://scripts/companion.gd")
 const HudScript = preload("res://scripts/hud.gd")
 const PauseMenuScript = preload("res://scripts/pause_menu.gd")
 const TutorialScript = preload("res://scripts/trail_tutorial.gd")
+const WorldMap = preload("res://scripts/world_map.gd")
 
 const TERRAIN_SIZE := 384
 const Z_START := 150.0
@@ -361,8 +362,12 @@ func _height_at(x: float, z: float) -> float:
 	var h := path_y(z)
 	h += _noise_roll.get_noise_2d(x, z) * lerpf(0.1, 2.2, smoothstep(PATH_HALF_WIDTH, 14.0, d))
 	h += smoothstep(12.0, 42.0, d + _noise_hill.get_noise_2d(x * 2.0, z * 2.0) * 6.0) * (7.0 + 14.0 * (0.5 + 0.5 * _noise_hill.get_noise_2d(x, z)))
-	h += smoothstep(z_start + 4.0, z_start + 30.0, z) * 16.0
-	h += smoothstep(z_end - 4.0, z_end - 30.0, z) * 16.0
+	# Hills close off both ends, except along the trail itself: it carries on
+	# through a gap into the next area (CLAUDE.md "World map / areas").
+	# The invisible caps in _build_walls still stop you walking out.
+	var gap := smoothstep(5.0, 16.0, d)
+	h += smoothstep(z_start + 4.0, z_start + 30.0, z) * 16.0 * gap
+	h += smoothstep(z_end - 4.0, z_end - 30.0, z) * 16.0 * gap
 	return h
 
 

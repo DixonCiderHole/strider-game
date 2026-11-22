@@ -17,12 +17,15 @@ var _done := false
 
 func _ready() -> void:
 	rng.seed = 91
-	curve_a = 22.0
-	curve_b = 9.0
-	curve_phase = 4.0
+	# Trail shape comes from the world map, so its ends line up with the
+	# neighbouring areas in position and direction.
+	var wm: Dictionary = WorldMap.AREAS["res://drag.tscn"]
+	curve_a = wm["a"]
+	curve_b = wm["b"]
+	curve_phase = wm["phase"]
 	terrain_seed = 57
-	z_start = 140.0
-	z_end = -170.0
+	z_start = wm["z_start"]
+	z_end = wm["z_end"]
 	GS.ensure_loaded()
 	GS.horde_mode = false
 	if not GS.menu_preview:

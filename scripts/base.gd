@@ -23,8 +23,10 @@ const StorageCrate = preload("res://scripts/storage_crate.gd")
 const StoragePanel = preload("res://scripts/storage_panel.gd")
 const LorePanel = preload("res://scripts/lore_panel.gd")
 const Lore = preload("res://scripts/lore.gd")
+const WorldMap = preload("res://scripts/world_map.gd")
 
 const CRASH_SITE := "res://main.tscn"
+const REACH := "res://reach.tscn"
 const ROCK_SCENES := ["res://demo/assets/models/RockA.tscn", "res://demo/assets/models/RockB.tscn", "res://demo/assets/models/RockC.tscn"]
 const ROCK_MATERIAL := "res://demo/assets/materials/M_rock23_tp.tres"
 
@@ -35,6 +37,7 @@ const VALLEY_HALF := 85.0
 const LAKE := Vector3(54.0, 0.0, 8.0)
 const LAKE_R := 18.0
 const WATER_Y := -0.55
+const LAKE_DEEP_R := 12.0
 const SPIRES := Vector3(-52.0, 0.0, -4.0)
 const OUTPOST := Vector3(40.0, 0.0, -46.0)
 const MEADOW := Vector3(-42.0, 0.0, 44.0)
@@ -109,6 +112,7 @@ func _ready() -> void:
 	_build_campfire()
 	_build_crates()
 	_build_trail_exit()
+	_build_reach_exit()
 	_build_map_points()
 	_build_lake()
 	_build_spires()
@@ -141,7 +145,20 @@ func _ready() -> void:
 	player.max_health = GS.player_max_health()
 	player.health = player.max_health
 	player.position = Vector3(0.0, _ground(Vector3(0, 0, 14)) + 0.1, 14.0)
+	# Back from Shipfall Reach: arrive at the end of the east trail.
+	var from_reach: bool = GS.flags.get("came_from", "") == REACH
+	GS.flags.erase("came_from")
+	if from_reach:
+		var ax := float(WorldMap.BASE_EAST["edge"]) - 9.0
+		var ap := Vector3(ax, 0.0, WorldMap.east_z(ax))
+		player.position = ap + Vector3(0.0, _ground(ap) + 0.1, 0.0)
 	add_child(player)
+	player.water_at = func(q: Vector3) -> float:
+		return WATER_Y if Vector2(q.x - LAKE.x, q.z - LAKE.z).length() < LAKE_R + 6.0 else -INF
+	if from_reach:
+		player._facing_yaw = PI * 0.5   # facing west, back into the valley
+		player.model.rotation.y = PI * 0.5
+		player.cam_yaw.rotation.y = PI * 0.5
 
 	droid = CompanionScript.new()
 	droid.name = "Droid"
@@ -245,8 +262,40 @@ func _build_injured_trooper() -> void:
 	add_child(him)
 	him.remove_from_group("player")   # he's scenery for now, not the player
 	him.model.rotation.y = yaw
-	_add_interact(bed + Vector3(0.0, _ground(bed) + 0.7, 0.0), "Check on him",
-			func(): _show_banner("He's severely injured.\nBest to let him rest for now.", 3.0))
+	_add_interact(bed + Vector3(0.0, _ground(bed) + 0.7, 0.0), "Check on him", _check_on_him)
+
+
+## Her medical missions (Items.MED_QUESTS) start and end at his cot.
+func _check_on_him() -> void:
+	if not GS.flags.has("med_stage"):
+		if GS.current_quest().get("title", "") != "Check On Him" and GS.quest_stage < Items.QUESTS.size():
+			_show_banner("Still out cold, but breathing.\nKeep the camp going. You'll check him over properly once you've a moment.", 4.0)
+			return
+		GS.flags["checked_on_him"] = true
+		if GS.current_quest().get("title", "") == "Check On Him":
+			# Finish it here, before her medical missions take over the tracker.
+			GS.flags["done:checked_on_him"] = true
+			GS.quest_stage += 1
+			GS.toast("QUEST COMPLETE: Check On Him  ·  +%d XP" % Items.QUEST_XP)
+			GS.add_xp(Items.QUEST_XP)
+		GS.flags["med_stage"] = 0
+		GS.toast("New quest: %s" % Items.MED_QUESTS[0]["title"])
+		GS.changed()
+		_show_banner("He's lost too much blood, and the bite wounds won't close.\nYour unit cached its heavy med packs in the wreck field east of here.\nTime to go and get them.", 6.0)
+		return
+	var st := int(GS.flags["med_stage"])
+	if st >= Items.MED_QUESTS.size():
+		_show_banner("He's stable. Breathing easy for once.\nLet him rest.", 3.0)
+	elif Items.MED_QUESTS[st]["goals"][0][0] == "treated_trooper":
+		GS.remove_item("medpack", mini(3, GS.count("medpack")))
+		if GS.count("coagulant") > 0:
+			GS.remove_item("coagulant", 1)
+		GS.flags["treated_trooper"] = true
+		GS.add_xp(15)
+		GS.changed()
+		_show_banner("You clean the bites, seal them with coagulant and change every dressing.\nHis breathing evens out. He'll live, if he rests.", 6.0)
+	else:
+		_show_banner("He's burning up. Field dressings won't hold him for long.\nGet those supplies.", 3.5)
 
 
 ## Your first morning at camp, as her: sat by the fire, then up.
@@ -423,10 +472,29 @@ func _height_at(x: float, z: float) -> float:
 	# Lake basin (after the mound, whose max() would otherwise fill it in).
 	var ld := Vector2(x - LAKE.x, z - LAKE.z).length() + _noise_roll.get_noise_2d(x * 2.0, z * 2.0) * 3.0
 	h = lerpf(h, -1.9, 1.0 - smoothstep(LAKE_R - 7.0, LAKE_R + 3.0, ld))
+	# The middle drops away: deep enough to swim out and dive.
+	if ld < LAKE_DEEP_R:
+		var u := ld / LAKE_DEEP_R
+		h = minf(h, -1.9 - 4.3 * (1.0 - u * u))
 	# Flatten the outpost pad.
 	var od := Vector2(x - OUTPOST.x, z - OUTPOST.z).length()
 	h = lerpf(h, 0.4, 1.0 - smoothstep(10.0, 16.0, od))
+	# The trail south out of the valley (world_map.gd BASE_LEAD) cuts through
+	# the ring of hills, so it visibly runs on to where you came in.
+	var td := _lead_dist(x, z)
+	if td < 20.0:
+		var on := (1.0 - smoothstep(4.0, 14.0, td)) * smoothstep(40.0, 62.0, z)
+		h = lerpf(h, _noise_roll.get_noise_2d(x, z) * 0.3, on)
+	# ...and so does the east trail to Shipfall Reach (world_map.gd BASE_EAST).
+	var ed := WorldMap.east_dist(x, z)
+	if ed < 20.0:
+		var on2 := (1.0 - smoothstep(4.0, 14.0, ed)) * smoothstep(46.0, 66.0, x)
+		h = lerpf(h, _noise_roll.get_noise_2d(x, z) * 0.3, on2)
 	return h
+
+
+func _lead_dist(x: float, z: float) -> float:
+	return WorldMap.lead_dist(WorldMap.BASE_LEAD, x, z)
 
 
 func _paint(data, x: float, z: float) -> void:
@@ -437,6 +505,14 @@ func _paint(data, x: float, z: float) -> void:
 	var path := 1.0 - smoothstep(1.5, 3.5, absf(x + sin(z * 0.15) * 1.5))
 	if z > CAVE.z and z < 22.0:
 		w = maxf(w, path * 0.9)
+	elif z >= 22.0:
+		# ...and on south out of the valley along the lead trail.
+		var ld := _lead_dist(x, z)
+		if ld < 9.0:
+			w = maxf(w, (1.0 - smoothstep(2.0, 5.5, ld + _noise_roll.get_noise_2d(x * 4.0, z * 4.0) * 1.5)) * 0.9)
+	var ed := WorldMap.east_dist(x, z)
+	if ed < 9.0:
+		w = maxf(w, (1.0 - smoothstep(2.0, 5.0, ed + _noise_roll.get_noise_2d(x * 4.0, z * 4.0) * 1.5)) * 0.85)
 	var e := Vector2(x / CAVE_R.x, (z - CAVE.z) / CAVE_R.z).length()
 	w = maxf(w, 1.0 - smoothstep(0.8, 1.05, e))
 	WK.paint_dirt(data, p, w)
@@ -1139,6 +1215,9 @@ func _build_map_points() -> void:
 			"Your shelter in the cliff cave. Beds and the campfire (rest to heal), the workbench, armory, med station, storage and radio.")
 	MapPoi.add(self, Vector3(0.0, 0.0, 24.0), "Trail to the Crash Site", "exit",
 			"A gap in the trees between two mossy boulders, south of the cave. Follow it back to the crash site to fight for more salvage.")
+	var ex := float(WorldMap.BASE_EAST["edge"]) - 6.0
+	MapPoi.add(self, Vector3(ex, 0.0, WorldMap.east_z(ex)), "Trail to Shipfall Reach", "exit",
+			"The trail east out of the valley, past the escape pod and between the lake and the outpost. It leads to Shipfall Reach, a wreck field by the rivers.")
 	MapPoi.add(self, POD_POS, "Crashed Escape Pod", "resource",
 			"East of camp. Metal scrap, plastic and supply crates.")
 	MapPoi.add(self, LAKE, "Stillwater", "landmark",
@@ -1190,6 +1269,51 @@ func _build_trail_exit() -> void:
 	_scatter(["Fern_1", "Plant_1_Big", "Bush_Common", "Grass_Wispy_Tall", "Grass_Common_Tall"], pos, 2.2, 6.5, 46, 0.7, 1.4, 25)
 	_scatter(["Fern_1", "Grass_Wispy_Short", "Clover_1"], pos + Vector3(0.0, 0.0, -2.5), 1.2, 3.0, 14, 0.5, 0.9, 26)
 	_add_interact(pos + Vector3(0.0, 1.0, 0.0), "Follow the trail back to the crash site (fight for more salvage)", func(): get_tree().change_scene_to_file(CRASH_SITE))
+
+
+## The east trail's end: a gap in the hills marked by a pathfinder beacon,
+## with the prompt into Shipfall Reach (world_map.gd BASE_EAST).
+func _build_reach_exit() -> void:
+	var x := float(WorldMap.BASE_EAST["edge"]) - 6.0
+	var pos := Vector3(x, 0.0, WorldMap.east_z(x))
+	pos.y = _ground(pos)
+	var scenes := []
+	for path in ROCK_SCENES:
+		if ResourceLoader.exists(path):
+			scenes.append(load(path))
+	var r := RandomNumberGenerator.new()
+	r.seed = 31
+	if not scenes.is_empty():
+		for spec in [[Vector3(0.6, 0.0, -4.2), 0.8], [Vector3(-0.4, 0.0, 4.4), 0.75], [Vector3(2.4, 0.0, -5.6), 0.55], [Vector3(2.0, 0.0, 5.8), 0.5]]:
+			var rp: Vector3 = pos + spec[0]
+			var rock: Node3D = scenes[r.randi() % scenes.size()].instantiate()
+			rock.scale = Vector3.ONE * float(spec[1]) * r.randf_range(0.9, 1.1)
+			rock.rotation = Vector3(0.0, r.randf() * TAU, r.randf_range(-0.15, 0.15))
+			rock.position = Vector3(rp.x, _ground(rp) - 0.4, rp.z)
+			add_child(rock)
+	if ResourceLoader.exists("res://models/reach_kit.glb"):
+		var kit: Node = load("res://models/reach_kit.glb").instantiate()
+		var src := kit.find_child("PathfinderBeacon", true, false) as MeshInstance3D
+		if src != null:
+			var bp := pos + Vector3(-1.0, 0.0, -2.6)
+			var b := MeshInstance3D.new()
+			b.mesh = src.mesh
+			b.position = Vector3(bp.x, _ground(bp), bp.z)
+			add_child(b)
+			var lamp := OmniLight3D.new()
+			lamp.light_color = Color(1.0, 0.55, 0.15)
+			lamp.light_energy = 1.2
+			lamp.omni_range = 5.0
+			lamp.position = b.position + Vector3(0.0, 2.05, 0.0)
+			add_child(lamp)
+			var tw := lamp.create_tween().set_loops()
+			tw.tween_property(lamp, "light_energy", 1.4, 0.15)
+			tw.tween_property(lamp, "light_energy", 0.0, 0.25)
+			tw.tween_interval(1.2)
+		kit.free()
+	_scatter(["Fern_1", "Grass_Wispy_Tall", "Grass_Common_Tall", "Bush_Common"], pos, 3.0, 7.0, 30, 0.7, 1.3, 32)
+	_add_interact(pos + Vector3(0.0, 1.0, 0.0), "Head east to Shipfall Reach", func():
+		get_tree().change_scene_to_file(REACH))
 
 
 ## A few cherry trees in full blossom scattered through the open valley.
@@ -1287,7 +1411,9 @@ func _landmark_clear(p: Vector3, pad: float) -> bool:
 		or q.distance_to(Vector2(SPIRES.x, SPIRES.z)) < 13.0 + pad \
 		or q.distance_to(Vector2(OUTPOST.x, OUTPOST.z)) < 16.0 + pad \
 		or q.distance_to(Vector2(MEADOW.x, MEADOW.z)) < 9.0 + pad \
-		or q.distance_to(Vector2(POD_POS.x, POD_POS.z)) < 6.0 + pad
+		or q.distance_to(Vector2(POD_POS.x, POD_POS.z)) < 6.0 + pad \
+		or _lead_dist(p.x, p.z) < 4.0 + pad \
+		or WorldMap.east_dist(p.x, p.z) < 4.0 + pad
 
 
 # ---------------------------------------------------------------- UI
@@ -1638,10 +1764,12 @@ func _build_resources() -> void:
 		if pine != null:
 			WK.place(self, pine, Transform3D(Basis.IDENTITY.scaled(Vector3.ONE * 1.9), tp + Vector3(0.0, -0.15, 0.0)))
 		WK.trunk_collider(self, tp, 1.9)
-	for v in [Vector3(-11, 0, -8), Vector3(12, 0, -10)]:
+	for v in [Vector3(-11, 0, -8), Vector3(12, 0, -10), Vector3(OUTPOST.x - 14.0, 0, OUTPOST.z + 10.0)]:
 		var vp: Vector3 = v
 		vp.y = _ground(vp)
 		Pickup.spawn(self, "vein", "ore", vp)
+	MapPoi.add(self, Vector3(-11, 0, -8), "Ore vein", "resource", "An ore vein at the cliff foot by the cave. Mine it with a pick (E).")
+	MapPoi.add(self, Vector3(12, 0, -10), "Ore vein", "resource", "An ore vein at the cliff foot by the cave. Mine it with a pick (E).")
 
 
 ## A crashed escape pod east of camp: scrap, plastic and supply crates.
@@ -1726,6 +1854,19 @@ func _quest_target():
 	var q := GS.current_quest()
 	if q.is_empty():
 		return null
+	# Her medical missions: everything happens out east, except the last step.
+	if GS.med_active() or GS.drone_active():
+		for g in q["goals"]:
+			if GS.goal_done(g[0]):
+				continue
+			if g[0] == "treated_trooper":
+				return BED_L + Vector3(0.0, _ground(BED_L) + 0.6, 0.0)
+			if String(g[0]).begins_with("crafted:"):
+				return BENCH_POS + Vector3(0.0, _ground(BENCH_POS), 0.0)
+			var ex := float(WorldMap.BASE_EAST["edge"]) - 6.0
+			var ep := Vector3(ex, 0.0, WorldMap.east_z(ex))
+			return ep + Vector3(0.0, _ground(ep), 0.0)
+		return null
 	for g in q["goals"]:
 		var id: String = g[0]
 		if GS.goal_done(id):
@@ -1740,11 +1881,18 @@ func _quest_target():
 				if parts[1] == "scrap":
 					var sp = _nearest_pickup("resource", "scrap")
 					return sp if sp != null else POD_POS
+				if parts[1] == "ore":
+					var op = _nearest_pickup("vein", "")
+					return op if op != null else _nearest_pickup("resource", "ore")
 				return _nearest_pickup("resource", parts[1])
 			"bench", "crafted", "equipped_module":
 				return BENCH_POS + Vector3(0.0, _ground(BENCH_POS), 0.0)
 			"chopped":
 				return _nearest_pickup("tree", "")
+			"checked_on_him":
+				return BED_L + Vector3(0.0, _ground(BED_L) + 0.6, 0.0)
+			"mined":
+				return _nearest_pickup("vein", "")
 			_:
 				return null
 	return null
@@ -1937,6 +2085,54 @@ func _build_lily_pads() -> void:
 		add_child(mi)
 
 
+## A supply pod that missed the valley and went into the lake. It's on the
+## bottom in the deep middle: swim out from the jetty and dive.
+const LAKE_POD_LOOT := {"mod_crit": 1, "crystal": 3, "thermal": 1, "trauma_kit": 2, "tech": 4}
+
+func _build_lake_pod() -> void:
+	var c := LAKE + Vector3(2.5, 0.0, -1.5)
+	c.y = _ground(c) + 0.05
+	var body := StaticBody3D.new()
+	body.name = "LakePod"
+	body.transform = Transform3D(Basis(Vector3.UP, 2.2) * Basis(Vector3(0, 0, 1), deg_to_rad(-12.0)), c)
+	add_child(body)
+	if ResourceLoader.exists("res://models/reach_kit.glb"):
+		var kit: Node3D = load("res://models/reach_kit.glb").instantiate()
+		var src := kit.find_child("CargoPod", true, false) as MeshInstance3D
+		if src != null:
+			var mi := MeshInstance3D.new()
+			mi.mesh = src.mesh
+			body.add_child(mi)
+			var cs := CollisionShape3D.new()
+			cs.shape = src.mesh.create_trimesh_shape()
+			body.add_child(cs)
+		kit.free()
+	var opened: bool = GS.flags.get("lake_pod", false)
+	var light := OmniLight3D.new()
+	light.light_color = Color(0.3, 0.9, 1.0)
+	light.light_energy = 0.0 if opened else 1.4
+	light.omni_range = 4.5
+	light.position = c + Vector3(0.0, 1.6, 0.0)
+	add_child(light)
+	var it = _add_interact(c + Vector3(0.0, 1.0, 0.0), "Pry open the sunken supply pod", func(): pass)
+	it.reach = 3.0
+	it.enabled = not opened
+	it.action = func():
+		if GS.flags.get("lake_pod", false):
+			return
+		GS.flags["lake_pod"] = true
+		it.enabled = false
+		light.light_energy = 0.0
+		var got := []
+		for id in LAKE_POD_LOOT:
+			GS.add_item(id, LAKE_POD_LOOT[id])
+			got.append("%s x%d" % [String(Items.ITEMS.get(id, {}).get("name", id)), LAKE_POD_LOOT[id]])
+		GS.add_xp(10)
+		GS.changed()
+		Sfx.ui("crate_open", -4.0, 0.05)
+		_show_banner("SUNKEN SUPPLY POD\n" + ", ".join(got), 5.0)
+
+
 func _build_lake() -> void:
 	var water := MeshInstance3D.new()
 	var plane := PlaneMesh.new()
@@ -1957,16 +2153,7 @@ func _build_lake() -> void:
 	water.position = Vector3(LAKE.x, WATER_Y, LAKE.z)
 	add_child(water)
 	_build_lily_pads()
-	# Wade in to your knees, no further.
-	var block := StaticBody3D.new()
-	var cs := CollisionShape3D.new()
-	var cyl := CylinderShape3D.new()
-	cyl.radius = LAKE_R - 4.5
-	cyl.height = 8.0
-	cs.shape = cyl
-	block.add_child(cs)
-	block.position = Vector3(LAKE.x, 2.0, LAKE.z)
-	add_child(block)
+	_build_lake_pod()
 	# Reeds, ferns and pebbles round the shore.
 	_scatter(["Grass_Wispy_Tall", "Grass_Common_Tall", "Plant_7_Big", "Fern_1"], LAKE, LAKE_R - 1.0, LAKE_R + 4.0, 140, 0.8, 1.6, 51)
 	_scatter(["Pebble_Round_1", "Pebble_Round_2", "Pebble_Round_3", "Pebble_Square_2"], LAKE, LAKE_R - 2.0, LAKE_R + 3.0, 60, 0.8, 2.0, 52)
@@ -2067,10 +2254,17 @@ func _build_spires() -> void:
 		glow.omni_range = 4.0
 		glow.position.y = 0.6
 		cl.add_child(glow)
-	for v in [Vector3(-2, 0, 2), Vector3(6, 0, -1)]:
+	for v in [Vector3(-2, 0, 2), Vector3(6, 0, -1), Vector3(-7, 0, -5)]:
 		var vp: Vector3 = SPIRES + v
 		vp.y = _ground(vp)
 		Pickup.spawn(self, "vein", "ore", vp)
+	# Spire crystal you can chip off with the pick.
+	for v in [Vector3(3, 0, 5), Vector3(-5, 0, 4)]:
+		var cp2: Vector3 = SPIRES + v
+		cp2.y = _ground(cp2)
+		Pickup.spawn(self, "crystal", "crystal", cp2)
+	MapPoi.add(self, SPIRES + Vector3(0, 0, 3), "Ore veins & crystal", "resource",
+			"Glowing orange ore veins and blue spire crystal at the foot of the spires. Mine them with a pick (E).")
 	_scatter(["Rock_Medium_1", "Rock_Medium_2", "Rock_Medium_3", "Pebble_Square_1", "Pebble_Square_4"], SPIRES, 2.0, 14.0, 70, 0.6, 1.6, 78)
 	_sign("CRYSTAL SPIRES", SPIRES + Vector3(0.0, _ground(SPIRES) + 9.5, 0.0), Color(0.6, 0.9, 1.0))
 

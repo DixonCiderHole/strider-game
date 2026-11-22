@@ -19,12 +19,15 @@ var _since_prune := 0.0
 
 func _ready() -> void:
 	rng.seed = 123
-	curve_a = 26.0
-	curve_b = 8.0
-	curve_phase = 2.2
+	# Trail shape comes from the world map, so its ends line up with the
+	# neighbouring areas in position and direction.
+	var wm: Dictionary = WorldMap.AREAS["res://pinned.tscn"]
+	curve_a = wm["a"]
+	curve_b = wm["b"]
+	curve_phase = wm["phase"]
 	terrain_seed = 44
-	z_start = 70.0
-	z_end = -80.0
+	z_start = wm["z_start"]
+	z_end = wm["z_end"]
 	GS.ensure_loaded()
 	GS.horde_mode = false
 	if not GS.menu_preview:

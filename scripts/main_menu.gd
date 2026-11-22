@@ -216,7 +216,7 @@ func _continue() -> void:
 
 func _area_name(scene: String) -> String:
 	return {"res://main.tscn": "CRASH SITE", "res://path.tscn": "THE TRAIL", "res://pinned.tscn": "PINNED",
-		"res://drag.tscn": "ESCAPE", "res://base.tscn": "BASE CAMP"}.get(scene, "")
+		"res://drag.tscn": "ESCAPE", "res://base.tscn": "BASE CAMP", "res://reach.tscn": "SHIPFALL REACH"}.get(scene, "")
 
 
 func _start_horde() -> void:
@@ -263,9 +263,42 @@ func _unhandled_input(event) -> void:
 		GS.reset()
 		get_tree().change_scene_to_file("res://path.tscn")
 		return
+	# Testing (editor only): F7 starts a brand-new game in save slot 5 as her,
+	# with her medical missions started, at the way into Shipfall Reach.
+	if OS.has_feature("editor") and event is InputEventKey and event.pressed and not event.echo and event.physical_keycode == KEY_F7:
+		GS.horde_mode = false
+		GS.use_slot(5)
+		GS.reset()
+		GS.reached_base = true
+		GS.flags["survivor_section"] = true
+		GS.flags["familiar_face_deferred"] = true
+		GS.quest_stage = 1
+		GS.switch_member("survivor")
+		GS.flags["med_stage"] = 0
+		GS.save()
+		get_tree().change_scene_to_file("res://reach.tscn")
+		return
+	# Testing (editor only): F8 starts a brand-new game in save slot 5 as the
+	# trooper with her missions done and the drone mission started, at the way
+	# into Shipfall Reach, with a bench and parts for the control chip.
+	if OS.has_feature("editor") and event is InputEventKey and event.pressed and not event.echo and event.physical_keycode == KEY_F8:
+		GS.horde_mode = false
+		GS.use_slot(5)
+		GS.reset()
+		GS.reached_base = true
+		GS.quest_stage = 1
+		GS.flags["med_stage"] = 4
+		GS.flags["drone_stage"] = 0
+		GS.bench_level = 1
+		GS.add_item("tech", 3, false)
+		GS.add_item("scrap", 6, false)
+		GS.add_item("plastic", 2, false)
+		GS.save()
+		get_tree().change_scene_to_file("res://reach.tscn")
+		return
 	# Testing: F2 cycles the night backdrop through every area.
 	if event is InputEventKey and event.pressed and not event.echo and event.physical_keycode == KEY_F2:
-		var areas := ["res://main.tscn", "res://path.tscn", "res://pinned.tscn", "res://drag.tscn", "res://base.tscn"]
+		var areas := ["res://main.tscn", "res://path.tscn", "res://pinned.tscn", "res://drag.tscn", "res://base.tscn", "res://reach.tscn"]
 		var i := areas.find(_backdrop.scene_file_path) if _backdrop != null else -1
 		if _backdrop != null:
 			_backdrop.queue_free()
